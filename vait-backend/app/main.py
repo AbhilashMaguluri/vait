@@ -1,0 +1,243 @@
+"""
+VAIT - Institutional University AI Assistant
+Main FastAPI Application Entry Point
+
+This is the official VAIT backend server implementing a strict RAG-based
+question answering system for institutional university queries.
+
+VAIT prioritizes correctness, authority, and refusal over answering.
+No JavaScript, No Node.js, No ChromaDB, No Pinecone - Python + FAISS only.
+"""
+
+import logging
+import sys
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+
+from app.utils.config import get_settings, ensure_directories, LOGS_DIR
+from app.routes.chat import router as chat_router
+from app.routes.admin import router as admin_router
+from app.services.rag_service import RAGService
+from app.services.file_watcher import FileWatcher, IncrementalIngestor, WATCHDOG_AVAILABLE
+
+
+# =============================================================================
+# LOGGING SETUP
+# =============================================================================
+
+def _configure_logging() -> None:
+    """Configure application-wide logging: console + file."""
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    root = logging.getLogger("vait")
+    root.setLevel(logging.DEBUG)
+    root.handlers.clear()
+
+    fmt = logging.Formatter(
+        "%(asctime)s | %(name)-25s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Console
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(fmt)
+    root.addHandler(ch)
+
+    # File
+    fh = logging.FileHandler(LOGS_DIR / "vait.log", encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+
+_configure_logging()
+logger = logging.getLogger("vait.main")
+
+
+# Global RAG service instance
+rag_service: RAGService = None
+file_watcher: FileWatcher = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Application lifespan manager.
+    Initializes and cleans up resources.
+    """
+    global rag_service, file_watcher
+
+    # Ensure all required directories exist
+    ensure_directories()
+
+    settings = get_settings()
+
+    # Initialize RAG service on startup
+    try:
+        rag_service = RAGService(settings)
+        await rag_service.initialize()
+    except Exception as exc:
+        logger.error("Failed to initialize RAG service: %s", exc, exc_info=True)
+        # Allow the server to start (health check will show degraded status)
+        rag_service = None
+
+    # Start file watcher if enabled
+    if settings.auto_watch_enabled and WATCHDOG_AVAILABLE and rag_service is not None:
+        try:
+            from pathlib import Path
+            watch_dirs = [Path(d) for d in settings.watch_directories]
+            ingestor = IncrementalIngestor(rag_service)
+            file_watcher = FileWatcher(
+                directories=watch_dirs,
+                on_new_file=ingestor.ingest_file,
+            )
+            file_watcher.start()
+            logger.info("File watcher started: %d directories", len(watch_dirs))
+        except Exception as exc:
+            logger.warning("File watcher failed to start: %s", exc)
+            file_watcher = None
+    else:
+        if settings.auto_watch_enabled and not WATCHDOG_AVAILABLE:
+            logger.warning("auto_watch_enabled=True but watchdog not installed")
+
+    logger.info("VAIT Backend v%s started successfully", settings.app_version)
+    logger.info(
+        "RAG Configuration: chunk_size=%d (~%d chars), top_k=%d, threshold=%.2f",
+        settings.chunk_size,
+        settings.chunk_size * 4,
+        settings.top_k_retrieval,
+        settings.similarity_threshold,
+    )
+    logger.info("FAISS Index Path: %s", settings.faiss_index_path)
+    logger.info("Metadata Path:    %s", settings.metadata_path)
+    logger.info("Allowed Domains:  %s", settings.allowed_domains)
+    logger.info("File Watcher:     %s", "running" if file_watcher else "disabled")
+
+    yield
+
+    # Cleanup on shutdown
+    if file_watcher is not None:
+        file_watcher.stop()
+    logger.info("VAIT Backend shutting down...")
+
+
+def create_app() -> FastAPI:
+    """
+    Create and configure the FastAPI application.
+    """
+    settings = get_settings()
+    
+    app = FastAPI(
+        title=settings.app_name,
+        version=settings.app_version,
+        description="Official institutional university AI assistant with strict RAG-based responses",
+        lifespan=lifespan,
+        docs_url="/docs",
+        redoc_url="/redoc"
+    )
+    
+    # Configure CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Configure appropriately for production
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
+    # Register routers
+    app.include_router(chat_router, prefix=settings.api_prefix)
+    app.include_router(admin_router, prefix=settings.api_prefix)
+    
+    @app.get("/")
+    async def root():
+        """Root endpoint - health check."""
+        return {
+            "service": "VAIT",
+            "version": settings.app_version,
+            "status": "operational"
+        }
+    
+    @app.get("/health")
+    async def health_check():
+        """
+        VAIT Institutional AI Dashboard — Health & Metrics.
+
+        Returns comprehensive system status for demo impact:
+          - Service info & operational status
+          - Total vectors / website / social / PDF breakdown
+          - Average adjusted score over last 10 queries
+          - Last reindex timestamp
+          - RAG configuration summary
+        """
+        base = {
+            "service": "VAIT — Institutional University AI Assistant",
+            "version": settings.app_version,
+            "status": "operational" if rag_service else "degraded",
+            "engine": "FAISS + Ollama RAG Pipeline (fully offline)",
+            "llm_model": settings.ollama_model,
+            "embedding_model": settings.embedding_model,
+        }
+
+        # Ollama connectivity check
+        try:
+            import requests as _req
+            _req.get("http://localhost:11434", timeout=3)
+            ollama_running = True
+        except Exception:
+            ollama_running = False
+
+        base["ollama_running"] = ollama_running
+
+        if rag_service is not None:
+            stats = rag_service.get_stats()
+            base.update({
+                "total_vectors": stats.get("total_vectors", 0),
+                "website_vectors": stats.get("website_vectors", 0),
+                "social_vectors": stats.get("social_vectors", 0),
+                "pdf_vectors": stats.get("pdf_vectors", 0),
+                "source_breakdown": stats.get("source_breakdown", {}),
+                "similarity_threshold": stats.get("similarity_threshold"),
+                "top_k_retrieval": stats.get("top_k"),
+                "avg_adjusted_score_last_10_queries": stats.get(
+                    "avg_adjusted_score_last_10_queries"
+                ),
+                "last_reindex_time": stats.get("last_reindex_time"),
+                "allowed_domains": settings.allowed_domains,
+                "cache_hits": stats.get("cache_hits", 0),
+                "cache_misses": stats.get("cache_misses", 0),
+                "cache_size": stats.get("cache_size", 0),
+                "uptime_seconds": stats.get("uptime_seconds", 0),
+            })
+        else:
+            base.update({
+                "total_vectors": 0,
+                "note": "RAG service is initializing — knowledge base not loaded yet.",
+            })
+
+        return base
+    
+    return app
+
+
+# Create the application instance
+app = create_app()
+
+
+def get_rag_service() -> RAGService:
+    """Get the RAG service instance."""
+    global rag_service
+    return rag_service
+
+
+if __name__ == "__main__":
+    import uvicorn
+    settings = get_settings()
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.debug
+    )

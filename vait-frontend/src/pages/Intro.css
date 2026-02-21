@@ -1,0 +1,120 @@
+/* =================================================================
+   VAIT Intro Animation
+   Two-phase institutional reveal sequence (~14 s total)
+   ================================================================= */
+
+/* ── Container ───────────────────────────────────────────────────── */
+
+.intro-screen {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  background-color: #fafaf8;
+  transition: opacity 1s ease-in-out;
+  opacity: 1;
+  overflow: hidden;
+}
+
+.intro-screen.intro-fade-out {
+  opacity: 0;
+}
+
+/* ── Phase 1 — "Introducing VVIT's…" ────────────────────────────── */
+
+.intro-phase1 {
+  position: absolute;
+  text-align: center;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 4s ease-in-out, transform 4s ease-in-out;
+}
+
+.intro-phase1.intro-phase1-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.intro-phase1.intro-phase1-out {
+  opacity: 0;
+  transform: translateY(0);
+  transition: opacity 0.8s ease-in-out;
+}
+
+.intro-phase1-text {
+  font-family: 'Inter', sans-serif;
+  font-size: 26px;
+  font-weight: 400;
+  color: #6b6b80;
+  letter-spacing: 0.5px;
+  line-height: 1.6;
+  margin: 0;
+  padding: 0 32px;
+}
+
+/* ── Phase 2 — VAIT branding ────────────────────────────────────── */
+
+.intro-phase2 {
+  position: absolute;
+  text-align: center;
+  user-select: none;
+}
+
+.intro-title {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 20px;
+}
+
+.intro-letter {
+  font-family: 'Source Serif 4', 'Georgia', serif;
+  font-size: 96px;
+  font-weight: 700;
+  color: #1a1a2e;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.8s ease-in-out, transform 0.8s ease-in-out;
+  letter-spacing: 6px;
+}
+
+.intro-letter-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.intro-caption {
+  font-family: 'Inter', sans-serif;
+  font-size: 20px;
+  font-weight: 400;
+  color: #6b6b80;
+  letter-spacing: 0.3px;
+  margin: 0;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 1s ease-in-out, transform 1s ease-in-out;
+}
+
+.intro-caption-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+  .intro-phase1-text {
+    font-size: 20px;
+    padding: 0 28px;
+  }
+
+  .intro-letter {
+    font-size: 64px;
+  }
+
+  .intro-caption {
+    font-size: 16px;
+    padding: 0 20px;
+  }
+}

@@ -1,0 +1,142 @@
+.message-row {
+  display: flex;
+  margin-bottom: 16px;
+  padding: 0 20px;
+}
+
+.message-row-user {
+  justify-content: flex-end;
+}
+
+.message-row-assistant {
+  justify-content: flex-start;
+}
+
+.message-bubble {
+  max-width: 680px;
+  padding: 14px 18px 10px;
+  border-radius: 6px;
+  position: relative;
+  line-height: 1.55;
+}
+
+.bubble-user {
+  background-color: #1a1a2e;
+  color: #f0f0f4;
+  border: 1px solid #1a1a2e;
+}
+
+.bubble-assistant {
+  background-color: #ffffff;
+  color: #2c2c3a;
+  border: 1px solid #e4e4ea;
+}
+
+.message-heading {
+  font-family: 'Source Serif 4', 'Georgia', serif;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin: 0 0 8px 0;
+}
+
+.message-text {
+  font-size: 13.5px;
+  margin: 0 0 8px 0;
+}
+
+.message-bullets {
+  margin: 8px 0 10px 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: #3a3a4a;
+}
+
+.message-bullets li {
+  margin-bottom: 4px;
+}
+
+.bubble-user .message-text {
+  font-size: 13.5px;
+  color: #f0f0f4;
+}
+
+.message-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eeeeef;
+}
+
+.sources-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8e8ea0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.source-tag {
+  font-size: 11px;
+  background-color: #f4f4f8;
+  color: #555;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid #e4e4ea;
+}
+
+.message-confidence {
+  margin-top: 8px;
+}
+
+.confidence-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 3px 10px;
+  border-radius: 3px;
+}
+
+.confidence-high {
+  background-color: #edf6f0;
+  color: #2d6a4f;
+  border: 1px solid #d4e8db;
+}
+
+.confidence-medium {
+  background-color: #fef9ee;
+  color: #8a6d2b;
+  border: 1px solid #ede0c0;
+}
+
+.confidence-low {
+  background-color: #fdf2f2;
+  color: #8b3a3a;
+  border: 1px solid #e0c8c8;
+}
+
+.message-time {
+  display: block;
+  font-size: 10px;
+  color: #aaa;
+  margin-top: 6px;
+  text-align: right;
+}
+
+.bubble-user .message-time {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+@media (max-width: 768px) {
+  .message-bubble {
+    max-width: 90%;
+  }
+
+  .message-row {
+    padding: 0 10px;
+  }
+}

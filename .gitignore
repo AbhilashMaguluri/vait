@@ -1,0 +1,71 @@
+# ==========================
+# Root .gitignore
+# ==========================
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ==========================
+# Python (vait-backend)
+# ==========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env
+
+# Python tooling
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Logs
+*.log
+vait-backend/data/logs/
+
+# Vector store (large / generated)
+vait-backend/data/vector_store/
+
+# Uploads (user-generated)
+vait-backend/uploads/
+
+# ==========================
+# Node / React (vait-frontend)
+# ==========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output
+vait-frontend/dist/
+vait-frontend/build/
+
+# Environment variables
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
