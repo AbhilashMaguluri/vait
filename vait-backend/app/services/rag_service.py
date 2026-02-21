@@ -340,6 +340,7 @@ class RAGService:
         14. Store in cache
         """
         t_start = time.perf_counter()
+        logger.info("[DEBUG] process_query called with message: %s", message)
 
         # ── Input validation ─────────────────────────────────────────
         if not message or not message.strip():

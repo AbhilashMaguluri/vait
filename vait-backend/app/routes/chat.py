@@ -132,11 +132,13 @@ async def chat(
     Response includes reply, sources, confidence, and retrieval_score.
     """
     try:
+        logger.info("[DEBUG] Incoming chat request — message: %s", request.message)
         response = await controller.process_message(
             message=request.message,
             department=request.department,
             academic_year=request.academic_year,
         )
+        logger.info("[DEBUG] Chat response confidence: %s, score: %.3f", response.confidence, response.retrieval_score)
         return ChatResponse(
             reply=response.reply,
             sources=response.sources,

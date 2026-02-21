@@ -7,6 +7,12 @@ export default defineConfig({
   server: {
     port: 3002,
     open: true,
+    proxy: {
+      '/api/vait': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
   },
   build: {
     outDir: 'dist',

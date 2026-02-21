@@ -53,8 +53,15 @@ class LLMService:
 
         final_prompt = f"{system_prompt}\n\n{contextual_prompt}"
 
+        logger.info("[DEBUG] User message: %s", user_message)
+        logger.debug("[DEBUG] Final prompt length: %d chars", len(final_prompt))
+        logger.debug("[DEBUG] Final prompt (first 500 chars): %s", final_prompt[:500])
+
         try:
-            return self.llm.generate(final_prompt)
+            response = self.llm.generate(final_prompt)
+            logger.info("[DEBUG] Ollama response length: %d chars", len(response))
+            logger.debug("[DEBUG] Ollama response (first 300 chars): %s", response[:300])
+            return response
         except Exception as exc:
             logger.error("LLM generation failed: %s", exc)
             raise RuntimeError(f"LLM generation failed: {exc}") from exc

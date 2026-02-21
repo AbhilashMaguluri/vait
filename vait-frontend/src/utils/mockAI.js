@@ -96,33 +96,64 @@ function pickConfidence() {
 }
 
 /**
- * Simulate an AI response from VAIT.
- * Returns a promise that resolves after a delay with a structured response.
+ * Send user message to the VAIT backend API.
+ * Falls back to mock response only if the backend is unreachable.
  */
-export function sendMessageToVAIT({ message, department, academicYear }) {
-  return new Promise((resolve) => {
-    const delay = 800 + Math.random() * 700;
+export async function sendMessageToVAIT({ message, department, academicYear }) {
+  console.log('[VAIT] Sending message:', message);
 
-    setTimeout(() => {
-      const category = detectCategory(message);
-      const responses = MOCK_RESPONSES[category] || MOCK_RESPONSES['Academic'];
-      const selected = responses[Math.floor(Math.random() * responses.length)];
-      const sources = MOCK_SOURCES[category] || MOCK_SOURCES['Academic'];
-      const confidence = pickConfidence();
+  try {
+    const res = await fetch('/api/vait/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        department: department || null,
+        academic_year: academicYear || null,
+      }),
+    });
 
-      resolve({
-        text: selected.body,
-        heading: selected.heading,
-        bullets: selected.bullets,
-        sources,
-        confidence,
-        category,
-        department: department || 'General',
-        academicYear: academicYear || '2025-26',
-        timestamp: new Date().toISOString(),
-      });
-    }, delay);
-  });
+    if (!res.ok) {
+      throw new Error(`Backend returned ${res.status}`);
+    }
+
+    const data = await res.json();
+    console.log('[VAIT] Backend response:', data);
+
+    const category = data.intent || detectCategory(message);
+
+    return {
+      text: data.reply,
+      heading: null,
+      bullets: null,
+      sources: data.sources || [],
+      confidence: data.confidence || 'Low',
+      category,
+      department: department || 'General',
+      academicYear: academicYear || '2025-26',
+      timestamp: new Date().toISOString(),
+    };
+  } catch (err) {
+    console.error('[VAIT] Backend call failed, using mock fallback:', err);
+
+    // ── Fallback to mock (development only) ─────────────────────
+    const category = detectCategory(message);
+    const responses = MOCK_RESPONSES[category] || MOCK_RESPONSES['Academic'];
+    const selected = responses[Math.floor(Math.random() * responses.length)];
+    const sources = MOCK_SOURCES[category] || MOCK_SOURCES['Academic'];
+
+    return {
+      text: selected.body,
+      heading: selected.heading,
+      bullets: selected.bullets,
+      sources,
+      confidence: pickConfidence(),
+      category,
+      department: department || 'General',
+      academicYear: academicYear || '2025-26',
+      timestamp: new Date().toISOString(),
+    };
+  }
 }
 
 export { detectCategory, CATEGORIES };
