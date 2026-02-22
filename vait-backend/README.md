@@ -24,10 +24,10 @@ VAIT is an institutional AI assistant that provides accurate information exclusi
 | Language | Python 3.10+ |
 | API Framework | FastAPI |
 | Vector Store | **FAISS** (THE PRIMARY DATABASE) |
-| Embeddings | OpenAI text-embedding-3-large |
-| LLM | OpenAI GPT-4 |
+| Embeddings | Ollama nomic-embed-text (768 dimensions) |
+| LLM | Ollama phi3:mini (fully offline) |
 
-**Explicitly NOT used:** JavaScript, Node.js, ChromaDB, Pinecone
+**Explicitly NOT used:** JavaScript, Node.js, ChromaDB, Pinecone, OpenAI
 
 ---
 
@@ -44,7 +44,7 @@ vait-backend/
 │   │   └── chat_controller.py     # Business logic for chat
 │   ├── services/
 │   │   ├── rag_service.py         # Main RAG implementation
-│   │   ├── llm_service.py         # OpenAI LLM integration
+│   │   ├── llm_service.py         # Ollama LLM integration
 │   │   └── embedding_service.py   # Embedding generation
 │   └── utils/
 │       ├── config.py              # Centralized configuration
@@ -136,8 +136,18 @@ pip install -r requirements.txt
 Create a `.env` file in `vait-backend/`:
 
 ```env
-OPENAI_API_KEY=your-openai-api-key
+# VAIT uses Ollama (fully offline) — no API keys needed
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=phi3:mini
+EMBEDDING_MODEL=nomic-embed-text
 DEBUG=false
+```
+
+### 4b. Pull Ollama Models
+
+```powershell
+ollama pull phi3:mini
+ollama pull nomic-embed-text
 ```
 
 ### 5. Run the Application
@@ -260,19 +270,23 @@ Health check endpoint.
 ```
 POST /api/vait/chat
      ↓
-1. Embed question (OpenAI text-embedding-3-large)
+1. Embed question (Ollama nomic-embed-text, 768-dim)
      ↓
-2. Search FAISS (top-k=4)
+2. Search FAISS (top-k=6, cosine similarity)
      ↓
 3. Fetch metadata + text
      ↓
-4. Check similarity threshold (≥0.75)
+4. Check similarity threshold (≥0.65)
      ↓
-5. Build grounded prompt
+5. Authority-weighted scoring + deduplication
      ↓
-6. Call LLM (GPT-4)
+6. Build grounded prompt
      ↓
-7. Return answer + sources OR refusal
+7. Call LLM (Ollama phi3:mini)
+     ↓
+8. Hallucination guard + response polish
+     ↓
+9. Return answer + sources + confidence OR refusal
 ```
 
 ---

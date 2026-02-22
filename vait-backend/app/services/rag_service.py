@@ -444,6 +444,18 @@ class RAGService:
                 sources=sources,
             )
             t_gen_end = time.perf_counter()
+        except MemoryError:
+            logger.error("LLM out of memory — model too large for available RAM")
+            return RAGResponse(
+                reply=(
+                    "The local model exceeded available memory. "
+                    "Please close other applications or use a smaller model."
+                ),
+                sources=[],
+                confidence="Low",
+                retrieval_score=0.0,
+                is_refusal=True,
+            )
         except Exception as exc:
             logger.error("LLM generation failed: %s", exc)
             return self._make_error_response(

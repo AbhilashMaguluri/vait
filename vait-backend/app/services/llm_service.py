@@ -42,6 +42,9 @@ class LLMService:
             logger.info("Ollama response length: %d chars", len(response))
             logger.debug("Ollama response (first 300 chars): %s", response[:300])
             return response
+        except MemoryError as exc:
+            logger.error("LLM generation out of memory: %s", exc)
+            raise  # propagate memory error for structured handling upstream
         except Exception as exc:
             logger.error("LLM generation failed: %s", exc)
             raise RuntimeError(f"LLM generation failed: {exc}") from exc

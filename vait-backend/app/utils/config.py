@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     
     # Ollama Configuration (fully offline LLM)
     ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "mistral"
+    ollama_model: str = "phi3:mini"
     embedding_model: str = "nomic-embed-text"
     
     # ==========================================================================

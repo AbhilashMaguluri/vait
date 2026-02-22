@@ -8,7 +8,7 @@ from typing import List
 logger = logging.getLogger("vait.ollama")
 
 OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_LLM_MODEL = "mistral"
+DEFAULT_LLM_MODEL = "phi3:mini"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
 EMBEDDING_DIMENSION = 768  # nomic-embed-text output dimension
 
@@ -25,21 +25,42 @@ class OllamaService:
 
     def generate(self, prompt: str) -> str:
         """Generate a text response from Ollama."""
-        response = requests.post(
-            f"{self.base_url}/api/generate",
-            json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-            },
-            timeout=120,
-        )
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                },
+                timeout=120,
+            )
 
-        if response.status_code != 200:
-            logger.error("Ollama generate error %d: %s", response.status_code, response.text)
-            raise RuntimeError(f"Ollama service error (status {response.status_code})")
+            if response.status_code != 200:
+                error_text = response.text
+                logger.error("Ollama generate error %d: %s", response.status_code, error_text)
+                if "requires more system memory" in error_text.lower():
+                    raise MemoryError(
+                        "The local model exceeded available memory. "
+                        "Please close other applications or use a smaller model."
+                    )
+                raise RuntimeError(f"Ollama service error (status {response.status_code})")
 
-        return response.json().get("response", "")
+            return response.json().get("response", "")
+
+        except MemoryError:
+            raise  # re-raise so callers can handle it
+        except requests.exceptions.ConnectionError as exc:
+            logger.error("Ollama connection failed: %s", exc)
+            raise RuntimeError("Cannot connect to Ollama. Is it running?") from exc
+        except Exception as exc:
+            error_msg = str(exc)
+            if "requires more system memory" in error_msg.lower():
+                raise MemoryError(
+                    "The local model exceeded available memory. "
+                    "Please close other applications or use a smaller model."
+                ) from exc
+            raise
 
     # ─── Single Embedding ────────────────────────────────────────────
 
