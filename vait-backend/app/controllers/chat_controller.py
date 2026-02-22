@@ -1,13 +1,4 @@
-"""
-VAIT Chat Controller
-Handles business logic for chat operations.
-
-Responsibilities:
-  - Input validation
-  - Delegate to RAG service
-  - Return structured ChatResult
-  - Provide debug retrieval pass-through
-"""
+"""VAIT Chat Controller — business logic for chat operations."""
 
 import logging
 from dataclasses import dataclass
@@ -46,18 +37,7 @@ class ChatController:
         department: Optional[str] = None,
         academic_year: Optional[str] = None,
     ) -> ChatResult:
-        """
-        Process a user message through the VAIT system.
-
-        Args:
-            message:       User's question or message.
-            department:    Optional department filter (future use).
-            academic_year: Optional academic-year filter (future use).
-
-        Returns:
-            ChatResult with the response, sources, confidence,
-            retrieval_score, and performance metrics.
-        """
+        """Process a user message through the RAG pipeline."""
         rag_service = _get_rag_service()
 
         if rag_service is None:
@@ -73,9 +53,6 @@ class ChatController:
                 is_refusal=True,
             )
 
-        # department / academic_year are accepted but not yet used for
-        # scoped retrieval.  They are passed through so the frontend
-        # contract is stable before the filtering logic is added.
         response: RAGResponse = await rag_service.process_query(message)
 
         return ChatResult(

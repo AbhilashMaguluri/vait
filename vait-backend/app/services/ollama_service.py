@@ -1,14 +1,4 @@
-"""
-VAIT Ollama Service
-Handles all LLM and embedding interactions via a local Ollama instance.
-
-This service replaces all OpenAI dependencies. VAIT is fully offline.
-Ollama must be running at http://localhost:11434.
-
-Models used:
-  - LLM:        mistral (or configurable)
-  - Embeddings: nomic-embed-text (768 dimensions)
-"""
+"""VAIT Ollama Service — local LLM and embedding client."""
 
 import logging
 import numpy as np

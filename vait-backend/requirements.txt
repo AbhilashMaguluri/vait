@@ -1,6 +1,3 @@
-# VAIT Backend Requirements
-# Python 3.10+ required
-# NO JavaScript, NO Node.js, NO ChromaDB, NO Pinecone
 
 # =============================================================================
 # Web Framework

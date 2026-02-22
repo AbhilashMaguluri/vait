@@ -1,10 +1,4 @@
-"""
-VAIT LLM Service
-Handles interactions with the local Ollama LLM for response generation.
-
-This service manages all LLM interactions for the VAIT system, including
-response generation. Uses Ollama (Mistral) for fully offline inference.
-"""
+"""VAIT LLM Service — Ollama response generation."""
 
 import logging
 from typing import List, Dict, Optional
@@ -30,21 +24,7 @@ class LLMService:
         system_prompt: str,
         sources: List[str],
     ) -> str:
-        """
-        Generate a response based on retrieved context.
-
-        Args:
-            user_message: The user's question.
-            context: Retrieved context from RAG.
-            system_prompt: The system prompt defining VAIT's behaviour.
-            sources: List of source document names.
-
-        Returns:
-            Generated response string.
-
-        Raises:
-            RuntimeError: If Ollama fails to generate a response.
-        """
+        """Generate a response from retrieved context via Ollama."""
         contextual_prompt = self._build_contextual_prompt(
             user_message=user_message,
             context=context,
@@ -53,14 +33,14 @@ class LLMService:
 
         final_prompt = f"{system_prompt}\n\n{contextual_prompt}"
 
-        logger.info("[DEBUG] User message: %s", user_message)
-        logger.debug("[DEBUG] Final prompt length: %d chars", len(final_prompt))
-        logger.debug("[DEBUG] Final prompt (first 500 chars): %s", final_prompt[:500])
+        logger.info("User message: %s", user_message)
+        logger.debug("Final prompt length: %d chars", len(final_prompt))
+        logger.debug("Final prompt (first 500 chars): %s", final_prompt[:500])
 
         try:
             response = self.llm.generate(final_prompt)
-            logger.info("[DEBUG] Ollama response length: %d chars", len(response))
-            logger.debug("[DEBUG] Ollama response (first 300 chars): %s", response[:300])
+            logger.info("Ollama response length: %d chars", len(response))
+            logger.debug("Ollama response (first 300 chars): %s", response[:300])
             return response
         except Exception as exc:
             logger.error("LLM generation failed: %s", exc)
@@ -72,12 +52,7 @@ class LLMService:
         context: str,
         sources: List[str]
     ) -> str:
-        """
-        Build the contextual prompt with retrieved information.
-
-        The prompt clearly separates context from the user question so the
-        LLM can ground its answer exclusively in the retrieved records.
-        """
+        """Build contextual prompt separating retrieved records from the user question."""
         source_list = "\n".join(f"  - {source}" for source in sources)
 
         return (

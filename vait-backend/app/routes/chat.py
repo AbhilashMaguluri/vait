@@ -1,12 +1,4 @@
-"""
-VAIT Chat Routes
-API endpoints for the VAIT chat interface.
-
-POST /api/vait/chat            → { reply, sources, confidence, retrieval_score }
-POST /api/vait/chat/detailed   → above + is_refusal
-GET  /api/vait/debug?query=... → retrieval diagnostics (engineering only)
-GET  /api/vait/stats           → knowledge base statistics
-"""
+"""VAIT Chat Routes — API endpoints for the chat interface."""
 
 import logging
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -20,7 +12,7 @@ logger = logging.getLogger("vait.routes.chat")
 router = APIRouter(tags=["chat"])
 
 
-# ── Request / Response models ────────────────────────────────────────
+# ── Request / Response models ──
 
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
@@ -30,15 +22,8 @@ class ChatRequest(BaseModel):
         min_length=1,
         max_length=2000,
     )
-    # ── Future frontend contract fields ─────────────────────────────
-    department: Optional[str] = Field(
-        None,
-        description="Department filter (e.g. 'CSE'). Reserved for future scoped retrieval.",
-    )
-    academic_year: Optional[str] = Field(
-        None,
-        description="Academic year filter (e.g. '2024-25'). Reserved for future scoped retrieval.",
-    )
+    department: Optional[str] = Field(None)
+    academic_year: Optional[str] = Field(None)
 
 
 class SourceItem(BaseModel):
@@ -107,14 +92,14 @@ class DebugResponse(BaseModel):
     )
 
 
-# ── Dependency ───────────────────────────────────────────────────────
+# ── Dependency ──
 
 def get_chat_controller() -> ChatController:
     """Dependency to get chat controller instance."""
     return ChatController()
 
 
-# ── Endpoints ────────────────────────────────────────────────────────
+# ── Endpoints ──
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
@@ -132,13 +117,13 @@ async def chat(
     Response includes reply, sources, confidence, and retrieval_score.
     """
     try:
-        logger.info("[DEBUG] Incoming chat request — message: %s", request.message)
+        logger.info("Incoming chat request: %s", request.message)
         response = await controller.process_message(
             message=request.message,
             department=request.department,
             academic_year=request.academic_year,
         )
-        logger.info("[DEBUG] Chat response confidence: %s, score: %.3f", response.confidence, response.retrieval_score)
+        logger.info("Chat response confidence: %s, score: %.3f", response.confidence, response.retrieval_score)
         return ChatResponse(
             reply=response.reply,
             sources=response.sources,

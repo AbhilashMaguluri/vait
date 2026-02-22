@@ -1,23 +1,4 @@
-"""
-VAIT RAG Service — Production-Grade Retrieval-Augmented Generation
-===================================================================
-
-Configuration:
-- Chunk size       : ~400 tokens (~1600 characters)
-- Top-K retrieval  : 6
-- Similarity thresh: 0.65 cosine similarity (strict)
-- Authority-weighted scoring: high ×1.10, medium ×1.05, low ×1.00
-- Confidence scoring: High (>=0.85), Medium (>=0.75), Low (<0.75)
-- Duplicate source removal
-- Context-length capping to prevent LLM overflow
-- Per-query performance instrumentation
-
-DESIGN RULES:
-1. FAISS stores vectors; metadata lives in metadata.json
-2. VAIT MUST NEVER answer without retrieved context
-3. Below-threshold similarity → REFUSAL
-4. No online learning — only document re-ingestion improves knowledge
-"""
+"""VAIT RAG Service — Retrieval-Augmented Generation pipeline."""
 
 import hashlib
 import json
@@ -54,7 +35,6 @@ AUTHORITY_MULTIPLIER = {
     "low": 1.00,
 }
 
-# ── Source-type bonus boosts ─────────────────────────────────────────
 SOURCE_TYPE_BOOST = {
     "official_website": 0.03,
     "website": 0.03,
@@ -66,20 +46,16 @@ MAX_CONTEXT_CHUNKS = 4                 # Top-N highest quality chunks
 NEAR_DUPLICATE_SIMILARITY = 0.90       # Jaccard word-overlap threshold
 MIN_VALID_RESPONSE_LENGTH = 40         # Characters — shorter = invalid
 
-# ── Confidence thresholds (adjusted_score-based) ─────────────────────
 CONFIDENCE_HIGH = 0.85
 CONFIDENCE_MEDIUM = 0.75
 CONFIDENCE_LOW = 0.65
-REFUSAL_ADJUSTED_THRESHOLD = 0.60      # Below this → refuse, skip LLM
+REFUSAL_ADJUSTED_THRESHOLD = 0.55
 
-# ── Response polish constants ────────────────────────────────────────
-MAX_RESPONSE_WORDS = 600               # Hard cap on reply word count
+MAX_RESPONSE_WORDS = 600
 
-# ── Query cache constants ────────────────────────────────────────────
-CACHE_CAPACITY = 100                   # Max cached responses
-CACHE_TTL_SECONDS = 600                # 10 minutes
+CACHE_CAPACITY = 100
+CACHE_TTL_SECONDS = 600
 
-# ── Intent classification keywords ──────────────────────────────────
 INTENT_KEYWORDS: Dict[str, List[str]] = {
     "academic": [
         "syllabus", "curriculum", "course", "subject", "semester",
@@ -121,7 +97,6 @@ INTENT_KEYWORDS: Dict[str, List[str]] = {
 }
 
 
-# ── Data classes ─────────────────────────────────────────────────────
 @dataclass
 class RetrievedChunk:
     """Represents a retrieved chunk with its metadata and score."""
@@ -166,18 +141,16 @@ class _CacheEntry:
     timestamp: float  # time.time() when stored
 
 
-class RAGService:
-    """
-    Production-grade RAG service for institutional knowledge retrieval.
+# Query normalization patterns
+_QUERY_NORMALIZE_PATTERNS = [
+    (re.compile(r"(?i)^full\s+form\s+of\s+(.+)$"), r"What is the full name of \1?"),
+    (re.compile(r"(?i)^expand\s+(.+)$"), r"What is the full name of \1?"),
+    (re.compile(r"(?i)^what\s+is\s+(.{1,10})\??$"), r"What is the full name of \1?"),
+]
 
-    Key principles:
-    1. Never answer without retrieved context
-    2. Refuse if similarity score is below threshold
-    3. Prioritise chunks by authority_level (high > medium > low)
-    4. Remove duplicate source chunks
-    5. Cap context length to prevent LLM overflow
-    6. Maintain institutional academic tone
-    """
+
+class RAGService:
+    """Production-grade RAG service for institutional knowledge retrieval."""
 
     def __init__(self, settings: Settings):
         """Initialize the RAG service."""
@@ -202,10 +175,6 @@ class RAGService:
         self._cache_hits: int = 0
         self._cache_misses: int = 0
         self._start_time: float = time.time()
-
-    # =================================================================
-    # INITIALISATION
-    # =================================================================
 
     async def initialize(self) -> None:
         """Initialize the RAG service and load existing index if available."""
@@ -235,9 +204,23 @@ class RAGService:
         self.index = faiss.IndexFlatIP(dimension)
         self.chunks = []
 
-    # =================================================================
-    # QUERY INTENT CLASSIFIER (Rule-Based)
-    # =================================================================
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        """Normalize query for better embedding matches.
+
+        - Strips whitespace
+        - Lowercases before pattern matching
+        - Rewrites shorthand forms (e.g. 'full form of X' -> 'What is the full name of X?')
+        """
+        query = query.strip()
+        if not query:
+            return query
+        for pattern, replacement in _QUERY_NORMALIZE_PATTERNS:
+            m = pattern.match(query)
+            if m:
+                query = pattern.sub(replacement, query)
+                break
+        return query
 
     @staticmethod
     def classify_intent(query: str) -> Tuple[str, List[str]]:
@@ -271,10 +254,6 @@ class RAGService:
         # Pick the intent with the most keyword matches
         best_intent = max(scores, key=lambda k: len(scores[k]))
         return best_intent, scores[best_intent]
-
-    # =================================================================
-    # RESPONSE CACHE
-    # =================================================================
 
     def _cache_key(self, query: str) -> str:
         """Normalize query into a cache key."""
@@ -315,10 +294,6 @@ class RAGService:
         while len(self._cache) > CACHE_CAPACITY:
             self._cache.popitem(last=False)
 
-    # =================================================================
-    # MAIN QUERY PIPELINE
-    # =================================================================
-
     async def process_query(self, message: str) -> RAGResponse:
         """
         Process a user query through the strict RAG pipeline.
@@ -340,9 +315,11 @@ class RAGService:
         14. Store in cache
         """
         t_start = time.perf_counter()
-        logger.info("[DEBUG] process_query called with message: %s", message)
 
-        # ── Input validation ─────────────────────────────────────────
+        # Normalize query for better embedding matches
+        message = self._normalize_query(message)
+        logger.info("Query: %s", message)
+
         if not message or not message.strip():
             return self._make_error_response(
                 "Please provide a question to proceed."
@@ -531,10 +508,6 @@ class RAGService:
 
         return formatted
 
-    # =================================================================
-    # RETRIEVAL
-    # =================================================================
-
     def _search_index(
         self, query_embedding: np.ndarray
     ) -> List[RetrievedChunk]:
@@ -572,10 +545,6 @@ class RAGService:
             return []
         query_embedding = await self.embedding_service.get_embedding(query)
         return self._search_index(query_embedding)
-
-    # =================================================================
-    # DEBUG RETRIEVAL (for /debug endpoint)
-    # =================================================================
 
     async def debug_retrieve(self, query: str) -> Dict:
         """
@@ -620,10 +589,6 @@ class RAGService:
             "intent": intent,
             "intent_keywords": intent_keywords,
         }
-
-    # =================================================================
-    # SCORING & FILTERING
-    # =================================================================
 
     def _has_sufficient_context(self, chunks: List[RetrievedChunk]) -> bool:
         """At least one chunk must meet the similarity threshold."""
@@ -738,10 +703,6 @@ class RAGService:
                 unique.append(c)
         return unique
 
-    # =================================================================
-    # CONTEXT OPTIMIZATION (Intelligence Layer)
-    # =================================================================
-
     @staticmethod
     def _word_set(text: str) -> set:
         """Return lowercase word set for Jaccard comparison."""
@@ -842,10 +803,6 @@ class RAGService:
             )
         return merged
 
-    # =================================================================
-    # CONTEXT BUILDING
-    # =================================================================
-
     def _build_context(self, chunks: List[RetrievedChunk]) -> str:
         """
         Build a formatted context string from retrieved chunks.
@@ -883,10 +840,6 @@ class RAGService:
         parts = [f"{f}={metadata[f]}" for f in fields if f in metadata]
         return ", ".join(parts)
 
-    # =================================================================
-    # RESPONSE FORMATTING (Step 8)
-    # =================================================================
-
     @staticmethod
     def _format_response(
         text: str,
@@ -917,27 +870,13 @@ class RAGService:
             intent=intent,
         )
 
-    # =================================================================
-    # HALLUCINATION DEFENSE (Intelligence Layer Step 3)
-    # =================================================================
-
     @staticmethod
     def _hallucination_guard(
         response_text: str,
         confidence: str,
         sources: List[str],
     ) -> Tuple[str, str]:
-        """
-        Post-LLM hallucination defence.
-
-        1. If no source citation detected in text → downgrade confidence to Low.
-        2. If response length < MIN_VALID_RESPONSE_LENGTH → treat as invalid.
-        3. Ensure at least one source is associated.
-
-        Returns:
-            (response_text, confidence)  — possibly modified.
-        """
-        # Check for invalid (too-short) generation
+        """Post-LLM hallucination defence: reject only empty / too-short responses."""
         if not response_text or len(response_text.strip()) < MIN_VALID_RESPONSE_LENGTH:
             logger.warning(
                 "Hallucination guard: response too short (%d chars), returning refusal",
@@ -945,38 +884,10 @@ class RAGService:
             )
             return REFUSAL_MESSAGE, "Low"
 
-        # Check for source citation in the LLM text
-        has_citation = False
-        if sources:
-            # Check if any source name appears in the response
-            for src in sources:
-                if src.lower() in response_text.lower():
-                    has_citation = True
-                    break
-
-            # Also check for common citation patterns
-            citation_patterns = [
-                r"(?i)source[s]?\s*:",
-                r"(?i)reference[s]?\s*:",
-                r"(?i)according to",
-                r"(?i)as per",
-                r"(?i)as mentioned in",
-                r"(?i)based on",
-            ]
-            for pat in citation_patterns:
-                if re.search(pat, response_text):
-                    has_citation = True
-                    break
-
-        if not has_citation and sources:
-            logger.debug("Hallucination guard: no citation detected, downgrading confidence")
+        if not sources:
             confidence = "Low"
 
         return response_text, confidence
-
-    # =================================================================
-    # CITATION FORMATTER (Intelligence Layer Step 4)
-    # =================================================================
 
     @staticmethod
     def _append_citations(
@@ -1014,10 +925,6 @@ class RAGService:
                 lines.append(f"{i}. {title}")
 
         return cleaned + "\n".join(lines)
-
-    # =================================================================
-    # ANSWER STRUCTURE ENFORCER (Intelligence Layer Step 6)
-    # =================================================================
 
     @staticmethod
     def _enforce_answer_structure(response_text: str, question: str) -> str:
@@ -1083,10 +990,6 @@ class RAGService:
 
         return "\n".join(parts)
 
-    # =================================================================
-    # RESPONSE POLISH MODE (Final Stabilization Step 3)
-    # =================================================================
-
     @staticmethod
     def _polish_response(response_text: str) -> str:
         """
@@ -1139,10 +1042,6 @@ class RAGService:
 
         return text.strip()
 
-    # =================================================================
-    # ERROR / REFUSAL HELPERS
-    # =================================================================
-
     @staticmethod
     def _make_error_response(message: str) -> RAGResponse:
         """Create a structured error/refusal response."""
@@ -1154,10 +1053,6 @@ class RAGService:
             retrieval_score=0.0,
             is_refusal=True,
         )
-
-    # =================================================================
-    # STRUCTURED SOURCES (Step 6 — Source Display Enhancement)
-    # =================================================================
 
     @staticmethod
     def _build_structured_sources(chunks: List[RetrievedChunk]) -> List[Dict]:
@@ -1201,10 +1096,6 @@ class RAGService:
 
         return sources
 
-    # =================================================================
-    # LOGGING (Step 10)
-    # =================================================================
-
     def _log_query(
         self,
         message: str,
@@ -1241,10 +1132,6 @@ class RAGService:
         except Exception:
             logger.debug("Failed to write query log entry", exc_info=True)
 
-    # =================================================================
-    # SYSTEM PROMPT
-    # =================================================================
-
     def _load_system_prompt(self) -> str:
         """Load the system prompt from the configured path."""
         prompt_path = Path(self.settings.system_prompt_path)
@@ -1262,10 +1149,6 @@ class RAGService:
             "5. Never guess.\n"
             "6. Never fabricate dates or policies.\n"
         )
-
-    # =================================================================
-    # DOCUMENT MANAGEMENT
-    # =================================================================
 
     async def add_documents(
         self,
@@ -1351,10 +1234,6 @@ class RAGService:
         if missing:
             raise ValueError(f"Missing required metadata fields: {missing}")
 
-    # =================================================================
-    # PERSISTENCE
-    # =================================================================
-
     async def _save_index(self) -> None:
         """Save the FAISS index and metadata to disk."""
         index_path = Path(self.settings.faiss_index_path)
@@ -1378,14 +1257,6 @@ class RAGService:
         self.index = faiss.read_index(str(index_path))
         with open(metadata_path, "r", encoding="utf-8") as f:
             self.chunks = json.load(f)
-
-    # =================================================================
-    # STATS
-    # =================================================================
-
-    # =================================================================
-    # HYBRID RETRIEVAL — SCAFFOLD  (Step 6)
-    # =================================================================
 
     async def hybrid_retrieve_fallback(
         self, query: str, seed_urls: Optional[List[str]] = None,
@@ -1441,10 +1312,6 @@ class RAGService:
             query,
         )
         return chunks  # return whatever we got (may be below threshold)
-
-    # =================================================================
-    # STATS
-    # =================================================================
 
     def get_stats(self) -> Dict:
         """Get comprehensive statistics about the knowledge base."""
@@ -1535,10 +1402,6 @@ class RAGService:
             return None
         except Exception:
             return None
-
-    # =================================================================
-    # SYSTEM SELF-SUMMARY (Final Stabilization Step 5)
-    # =================================================================
 
     def get_system_summary(self) -> Dict:
         """

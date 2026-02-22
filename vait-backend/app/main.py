@@ -1,13 +1,4 @@
-"""
-VAIT - Institutional University AI Assistant
-Main FastAPI Application Entry Point
-
-This is the official VAIT backend server implementing a strict RAG-based
-question answering system for institutional university queries.
-
-VAIT prioritizes correctness, authority, and refusal over answering.
-No JavaScript, No Node.js, No ChromaDB, No Pinecone - Python + FAISS only.
-"""
+"""VAIT — Main FastAPI Application Entry Point."""
 
 import logging
 import sys
