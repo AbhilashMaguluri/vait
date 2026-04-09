@@ -104,7 +104,8 @@ QUESTION_TYPES = {
 # =============================================================================
 
 REFUSAL_MESSAGE = (
-    "This information is not available in the official VAIT records at this time."
+    "I'm unable to find sufficient verified information in the VVIT knowledge "
+    "base to answer this query."
 )
 
 
@@ -129,6 +130,11 @@ class Settings(BaseSettings):
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "phi3:mini"
     embedding_model: str = "nomic-embed-text"
+
+    # Groq Configuration (primary LLM)
+    groq_api_key: str
+    groq_model: str = "llama-3.3-70b"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
     
     # ==========================================================================
     # RAG v2 CONFIGURATION (PRODUCTION)
@@ -244,6 +250,9 @@ def get_settings() -> Settings:
     logger.info("  .env file          : %s (loaded=%s)", _dotenv_path, _dotenv_loaded)
     logger.info("  Ollama URL         : %s", settings.ollama_url)
     logger.info("  LLM model          : %s", settings.ollama_model)
+    logger.info("  Groq model         : %s", settings.groq_model)
+    logger.info("  Groq base URL      : %s", settings.groq_base_url)
+    logger.info("  Groq key configured: %s", bool(settings.groq_api_key))
     logger.info("  Embedding model    : %s", settings.embedding_model)
     logger.info("  FAISS index path   : %s", settings.faiss_index_path)
     logger.info("  Similarity thresh  : %.2f", settings.similarity_threshold)

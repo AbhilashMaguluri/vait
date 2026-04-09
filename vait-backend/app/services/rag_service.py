@@ -430,6 +430,7 @@ class RAGService:
         context = self._build_context(qualified)
         sources = list(dict.fromkeys(c.document_name for c in qualified))
         structured_sources = self._build_structured_sources(qualified)
+        final_prompt = self._build_generation_prompt(context=context, query=message)
 
         # ── Compute confidence (adjusted_score-based) ────────────────
         confidence = self._compute_confidence_adjusted(top_adjusted)
@@ -437,11 +438,9 @@ class RAGService:
         # ── Generate response ────────────────────────────────────────
         try:
             t_gen_start = time.perf_counter()
-            response_text = await self.llm_service.generate_response(
-                user_message=message,
-                context=context,
+            response_text = self.llm_service.generate(
                 system_prompt=self.system_prompt,
-                sources=sources,
+                user_prompt=final_prompt,
             )
             t_gen_end = time.perf_counter()
         except MemoryError:
@@ -841,6 +840,16 @@ class RAGService:
         return "\n---\n".join(parts)
 
     @staticmethod
+    def _build_generation_prompt(context: str, query: str) -> str:
+        """Build the final user prompt payload for the generation step."""
+        return (
+            "CONTEXT:\n"
+            f"{context}\n\n"
+            "USER QUESTION:\n"
+            f"{query}"
+        )
+
+    @staticmethod
     def _format_metadata(metadata: Dict) -> str:
         """Format metadata fields for context display."""
         fields = [
@@ -910,7 +919,7 @@ class RAGService:
         Append a formatted citation block at the bottom of the reply.
 
         Format:
-            Sources:
+            Source(s):
             1. Title — URL
             2. Title — URL
 
@@ -919,15 +928,15 @@ class RAGService:
         if not structured_sources:
             return response_text
 
-        # Strip any existing "Sources:" block the LLM may have added
+        # Strip any existing source block the LLM may have added.
         cleaned = re.sub(
-            r"\n*Sources?:\s*\n(?:\d+\..*\n?)*",
+            r"\n*Source(?:\(s\))?s?:\s*\n(?:\d+\..*\n?)*",
             "",
             response_text,
             flags=re.IGNORECASE,
         ).rstrip()
 
-        lines = ["\n\nSources:"]
+        lines = ["\n\nSource(s):"]
         for i, src in enumerate(structured_sources, 1):
             title = src.get("title", "Unknown")
             url = src.get("url", "")
@@ -1151,15 +1160,19 @@ class RAGService:
             return prompt_path.read_text(encoding="utf-8")
 
         return (
-            "You are VAIT, the official university intelligence system of VVIT.\n\n"
-            "Rules:\n"
-            "1. Answer ONLY from provided context.\n"
-            "2. Maintain academic tone.\n"
-            "3. Structure response as: Title, Explanation, Bullet points, Source citation.\n"
-            "4. If information is not found in context, respond exactly:\n"
-            f'   "{REFUSAL_MESSAGE}"\n'
-            "5. Never guess.\n"
-            "6. Never fabricate dates or policies.\n"
+            "You are VAIT (Virtual Academic Intelligence Terminal), an institutional AI "
+            "assistant for Vasireddy Venkatadri Institute of Technology (VVIT).\n\n"
+            "STRICT RULES:\n"
+            "1. NEVER hallucinate.\n"
+            "2. NEVER guess.\n"
+            "3. NEVER use outside knowledge.\n"
+            "4. If context is insufficient, REFUSE with the exact refusal message below.\n"
+            f'   "{REFUSAL_MESSAGE}"\n\n'
+            "RESPONSE STRUCTURE:\n"
+            "1. Title (short, clear)\n"
+            "2. Explanation (2-4 sentences)\n"
+            "3. Key Points (bullet points)\n"
+            "4. Source(s)\n"
         )
 
     async def add_documents(

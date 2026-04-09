@@ -25,9 +25,9 @@ VAIT is an institutional AI assistant that provides accurate information exclusi
 | API Framework | FastAPI |
 | Vector Store | **FAISS** (THE PRIMARY DATABASE) |
 | Embeddings | Ollama nomic-embed-text (768 dimensions) |
-| LLM | Ollama phi3:mini (fully offline) |
+| LLM | Groq llama-3.3-70b (primary) + Ollama phi3:mini (fallback) |
 
-**Explicitly NOT used:** JavaScript, Node.js, ChromaDB, Pinecone, OpenAI
+**Explicitly NOT used for vector/database:** JavaScript, Node.js, ChromaDB, Pinecone
 
 ---
 
@@ -44,7 +44,7 @@ vait-backend/
 │   │   └── chat_controller.py     # Business logic for chat
 │   ├── services/
 │   │   ├── rag_service.py         # Main RAG implementation
-│   │   ├── llm_service.py         # Ollama LLM integration
+│   │   ├── llm_service.py         # Groq primary + Ollama fallback integration
 │   │   └── embedding_service.py   # Embedding generation
 │   └── utils/
 │       ├── config.py              # Centralized configuration
@@ -77,14 +77,14 @@ vait-backend/
 
 ---
 
-## RAG v1 Configuration (LOCKED)
+## RAG Configuration
 
 | Parameter | Value |
 |-----------|-------|
 | Chunk Size | ~400 tokens |
-| Top-K Retrieval | 4 |
-| Similarity Threshold | 0.75 (strict) |
-| Below Threshold | Polite refusal |
+| Top-K Retrieval | 6 |
+| Similarity Threshold | 0.65 (strict) |
+| Below Threshold | Hard refusal |
 
 ---
 
@@ -136,7 +136,12 @@ pip install -r requirements.txt
 Create a `.env` file in `vait-backend/`:
 
 ```env
-# VAIT uses Ollama (fully offline) — no API keys needed
+# Groq primary LLM configuration
+GROQ_API_KEY=your_api_key_here
+GROQ_MODEL=llama-3.3-70b
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+
+# Ollama fallback LLM + embeddings
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=phi3:mini
 EMBEDDING_MODEL=nomic-embed-text
@@ -232,8 +237,8 @@ Process a chat message.
 **Response (refusal - mandatory message):**
 ```json
 {
-  "reply": "This information is not available in the official VAIT records at this time.",
-  "sources": []
+"reply": "I'm unable to find sufficient verified information in the VVIT knowledge base to answer this query.",
+"sources": []
 }
 ```
 
@@ -282,7 +287,7 @@ POST /api/vait/chat
      ↓
 6. Build grounded prompt
      ↓
-7. Call LLM (Ollama phi3:mini)
+7. Call LLM (Groq llama-3.3-70b, fallback to Ollama phi3:mini)
      ↓
 8. Hallucination guard + response polish
      ↓
@@ -360,7 +365,7 @@ curl -X POST "http://localhost:8000/api/vait/chat" \
 
 When context is missing or similarity is below threshold:
 
-> **"This information is not available in the official VAIT records at this time."**
+> **"I'm unable to find sufficient verified information in the VVIT knowledge base to answer this query."**
 
 This message is non-negotiable and ensures institutional consistency.
 
