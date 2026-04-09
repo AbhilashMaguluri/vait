@@ -1,3 +1,5 @@
+import { buildApiUrl } from './apiConfig';
+
 const CATEGORIES = ['Academic', 'Exams', 'Administration', 'Placements'];
 
 const MOCK_SOURCES = {
@@ -101,9 +103,11 @@ function pickConfidence() {
  */
 export async function sendMessageToVAIT({ message, department, academicYear }) {
   console.log('[VAIT] Sending message:', message);
+  const endpoint = buildApiUrl('/api/vait/chat');
+  console.log('[VAIT] API endpoint:', endpoint);
 
   try {
-    const res = await fetch('/api/vait/chat', {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
