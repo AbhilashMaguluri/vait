@@ -1,4 +1,4 @@
-import { buildApiUrl } from './apiConfig';
+import { BASE_URL, buildApiUrl } from './apiConfig';
 
 const CATEGORIES = ['Academic', 'Exams', 'Administration', 'Placements'];
 
@@ -104,6 +104,7 @@ function pickConfidence() {
 export async function sendMessageToVAIT({ message, department, academicYear }) {
   console.log('[VAIT] Sending message:', message);
   const endpoint = buildApiUrl('/api/vait/chat');
+  console.log('[VAIT] API base URL:', BASE_URL);
   console.log('[VAIT] API endpoint:', endpoint);
 
   try {

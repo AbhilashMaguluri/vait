@@ -1,21 +1,7 @@
-const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
-
-const normalizedApiUrl = rawApiUrl.replace(/\/+$/, '');
-const apiUrlContainsPrefix = /\/api\/vait$/i.test(normalizedApiUrl);
+export const BASE_URL =
+  (import.meta.env.VITE_API_URL || 'http://localhost:8000').trim().replace(/\/+$/, '');
 
 export function buildApiUrl(path) {
-  const initialPath = path.startsWith('/') ? path : `/${path}`;
-
-  if (!normalizedApiUrl) {
-    return initialPath;
-  }
-
-  const normalizedPath =
-    apiUrlContainsPrefix && initialPath.startsWith('/api/vait')
-      ? initialPath.replace(/^\/api\/vait/i, '') || '/'
-      : initialPath;
-
-  return `${normalizedApiUrl}${normalizedPath}`;
+  const normalizedPath = path.startsWith('/') ? path : '/' + path;
+  return BASE_URL + normalizedPath;
 }
-
-export const API_BASE_URL = normalizedApiUrl;
