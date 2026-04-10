@@ -136,6 +136,7 @@ class CrawledPage:
             "url": self.url,
             "title": self.title,
             "source_type": "website",
+            "source_tier": "primary_official",
             "authority_level": "medium",
             "document_type": "official_website",
         }

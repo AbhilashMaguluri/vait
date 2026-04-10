@@ -1,11 +1,12 @@
 [
     {
-        "title": "Example Instagram Post — VVIT Campus Life",
+        "title": "Example Instagram Post - VVIT Campus Life",
         "content": "Vasireddy Venkatadri International Technology campus celebrated its annual cultural fest with students from all departments participating in various events.",
         "date": "2026-01-15",
         "platform": "Instagram",
         "url": "https://www.instagram.com/p/example123/",
         "source_type": "social_media",
+        "source_tier": "tertiary_social",
         "authority_level": "low",
         "document_type": "announcement"
     }

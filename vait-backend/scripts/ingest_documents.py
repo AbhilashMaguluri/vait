@@ -429,6 +429,7 @@ def infer_metadata(file_path: Path, base_dir: Path) -> Dict:
         "academic_year": _infer_academic_year(),
         "department": "General",
         "authority_level": "low",
+        "source_tier": "related_web",
         "source_file": file_path.name,
     }
 
@@ -463,6 +464,10 @@ def infer_metadata(file_path: Path, base_dir: Path) -> Dict:
     dept = _infer_department(file_path.stem)
     if dept:
         meta["department"] = dept
+
+    # Default source tier assignment for document corpora.
+    if meta["document_type"] in {"regulation", "syllabus", "notice", "website"}:
+        meta["source_tier"] = "primary_official"
 
     return meta
 

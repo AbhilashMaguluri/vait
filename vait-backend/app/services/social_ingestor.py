@@ -20,6 +20,7 @@ Output per entry::
     {
         "text": "<cleaned text>",
         "source_type": "social_media",
+        "source_tier": "secondary_linkedin",
         "authority_level": "low",
         "document_type": "announcement",
         "platform": "Instagram",
@@ -93,6 +94,47 @@ def _build_text_block(entry: Dict) -> str:
         parts.append(content)
 
     return "\n".join(parts)
+
+
+def _infer_source_profile(entry: Dict) -> Dict[str, str]:
+    """
+    Infer source tier and default authority from social entry metadata.
+
+    Returns dict with:
+      - source_tier
+      - authority_level
+    """
+    platform = str(entry.get("platform", "")).strip().lower()
+    url = str(entry.get("url", "")).strip().lower()
+    title = str(entry.get("title", "")).strip().lower()
+    content = str(entry.get("content", "")).strip().lower()
+
+    combined_text = f"{title} {content}"
+    mentions_vvit = "vvit" in combined_text or "vvitu" in combined_text
+
+    is_linkedin = platform == "linkedin" or "linkedin.com" in url
+    if is_linkedin:
+        return {
+            "source_tier": "secondary_linkedin",
+            "authority_level": "medium" if mentions_vvit else "low",
+        }
+
+    if platform in {"instagram", "twitter", "x", "facebook", "youtube"}:
+        return {
+            "source_tier": "tertiary_social",
+            "authority_level": "low",
+        }
+
+    if mentions_vvit:
+        return {
+            "source_tier": "tertiary_social",
+            "authority_level": "low",
+        }
+
+    return {
+        "source_tier": "related_web",
+        "authority_level": "low",
+    }
 
 
 # =====================================================================
@@ -194,6 +236,7 @@ class SocialIngestor:
         """Convert a single social entry to an ingestion-ready dict."""
         text_block = _build_text_block(entry)
         cleaned = _clean_social_text(text_block)
+        profile = _infer_source_profile(entry)
 
         if len(cleaned) < 30:
             logger.debug("Social entry too short, skipping: %.60s…", cleaned)
@@ -208,8 +251,9 @@ class SocialIngestor:
         return {
             "text": cleaned,
             "source_type": "social_media",
-            "authority_level": "low",
-            "document_type": "announcement",
+            "source_tier": entry.get("source_tier", profile["source_tier"]),
+            "authority_level": entry.get("authority_level", profile["authority_level"]),
+            "document_type": entry.get("document_type", "announcement"),
             "platform": entry.get("platform", "unknown"),
             "url": entry.get("url", ""),
             "date": entry.get("date", ""),

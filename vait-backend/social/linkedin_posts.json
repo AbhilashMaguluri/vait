@@ -1,12 +1,13 @@
 [
     {
-        "title": "Example LinkedIn Post — VVIT Placements Update",
-        "content": "VVIT Guntur is proud to announce outstanding placement results for the 2025-26 academic year with top recruiters visiting the campus.",
+        "title": "Example LinkedIn Post - VVIT Placements Update",
+        "content": "VVIT Guntur announced recent placement updates for the 2025-26 academic year with recruiters visiting campus.",
         "date": "2026-01-20",
         "platform": "LinkedIn",
-        "url": "https://www.linkedin.com/posts/example456",
+        "url": "https://www.linkedin.com/school/vasireddy-venkatadri-institute-of-technology-nambur-v-pedakakani-m-pin-522508-cc-bq-/posts/?feedView=all",
         "source_type": "social_media",
-        "authority_level": "low",
+        "source_tier": "secondary_linkedin",
+        "authority_level": "medium",
         "document_type": "announcement"
     }
 ]

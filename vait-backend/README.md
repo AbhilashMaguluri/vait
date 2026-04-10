@@ -13,7 +13,7 @@ VAIT is an institutional AI assistant that provides accurate information exclusi
 - **NEVER answers without retrieved context**
 - **REFUSES when similarity score is below threshold**
 - **Does NOT learn from users** - only document re-ingestion improves knowledge
-- **Prioritizes authority** - regulations > academic calendar > notices > website content
+- **Prioritizes source hierarchy** - official VVIT/VVITU websites > LinkedIn > other social > related web
 
 ---
 
@@ -98,15 +98,16 @@ Each chunk stores:
 | `document_type` | Type of document | regulation, syllabus, notice, website |
 | `academic_year` | Academic year | e.g., 2025-2026 |
 | `department` | Responsible department | string |
+| `source_tier` | Retrieval source priority tier | primary_official, secondary_linkedin, tertiary_social, related_web |
 | `authority_level` | Weight of the information | high, medium, low |
 | `source_file` | Original filename | string |
 
-### Authority Priority
+### Source Priority
 
-1. **Regulations** (high)
-2. **Academic Calendar** (high)
-3. **Notices** (medium)
-4. **Website Content** (low)
+1. **Primary Official** - VVIT/VVITU official websites and institutional documents
+2. **Secondary LinkedIn** - official VVIT and VVIT community LinkedIn updates
+3. **Tertiary Social** - Instagram/Twitter/Facebook/YouTube/event updates
+4. **Related Web** - external articles/reviews/portals (supporting only)
 
 ---
 
@@ -237,7 +238,7 @@ Process a chat message.
 **Response (refusal - mandatory message):**
 ```json
 {
-"reply": "I'm unable to find sufficient verified information in the VVIT knowledge base to answer this query.",
+"reply": "Based on available VVIT sources, this information is not clearly specified.",
 "sources": []
 }
 ```
@@ -265,6 +266,8 @@ Health check endpoint.
 |----------|--------|-------------|
 | `/api/vait/admin/ingest` | POST | Ingest single document |
 | `/api/vait/admin/ingest/bulk` | POST | Ingest multiple documents |
+| `/api/vait/admin/reindex/websites` | POST | Crawl official websites and ingest |
+| `/api/vait/admin/ingest/social` | POST | Ingest LinkedIn/social entries |
 | `/api/vait/admin/knowledge-base/stats` | GET | Get KB statistics |
 | `/api/vait/admin/knowledge-base/clear` | DELETE | Clear knowledge base |
 
@@ -283,7 +286,7 @@ POST /api/vait/chat
      ↓
 4. Check similarity threshold (≥0.65)
      ↓
-5. Authority-weighted scoring + deduplication
+5. Authority + source-tier weighted scoring + deduplication
      ↓
 6. Build grounded prompt
      ↓
@@ -331,7 +334,7 @@ The system prompt is located at `prompts/vait_system_prompt.txt` and defines:
 1. **FAISS is the primary database** - stores vectors only, metadata in JSON
 2. **VAIT NEVER answers without context** - strict retrieval requirement
 3. **No online learning** - knowledge improves only through document re-ingestion
-4. **Authority-aware retrieval** - prioritizes official regulations
+4. **Source-aware retrieval** - prioritizes official websites, then LinkedIn/social when relevant
 5. **Correctness over helpfulness** - better to refuse than to guess
 
 ---
@@ -365,7 +368,7 @@ curl -X POST "http://localhost:8000/api/vait/chat" \
 
 When context is missing or similarity is below threshold:
 
-> **"I'm unable to find sufficient verified information in the VVIT knowledge base to answer this query."**
+> **"Based on available VVIT sources, this information is not clearly specified."**
 
 This message is non-negotiable and ensures institutional consistency.
 

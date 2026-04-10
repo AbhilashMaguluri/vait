@@ -104,8 +104,7 @@ QUESTION_TYPES = {
 # =============================================================================
 
 REFUSAL_MESSAGE = (
-    "I'm unable to find sufficient verified information in the VVIT knowledge "
-    "base to answer this query."
+    "Based on available VVIT sources, this information is not clearly specified."
 )
 
 

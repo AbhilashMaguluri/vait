@@ -94,6 +94,7 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
 - **FAISS vector search** with cosine similarity (IndexFlatIP, L2-normalized)
 - **Strict similarity threshold** (0.65) — refuses to answer when confidence is low
 - **Authority-weighted scoring** — Regulations (×1.15) > Syllabi/Notices (×1.05) > Website/Social (×1.00)
+- **Source-tier-aware ranking** — primary official VVIT/VVITU sources > LinkedIn > other social > related web
 - **LRU response cache** with 600s TTL (100-entry capacity)
 - **Content deduplication** — hash-based + Jaccard word-overlap filtering (0.90 threshold)
 - **Adjacent chunk merging** from the same source document
@@ -104,7 +105,7 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
 ### 📄 Document Ingestion
 - Batch CLI ingestion for **PDF**, **DOCX**, and **TXT** files
 - Smart character-based chunking (~400 tokens / 1600 chars, 200-char overlap)
-- Metadata inference from folder structure (document_type, authority_level, academic_year, department)
+- Metadata inference from folder structure (document_type, authority_level, source_tier, academic_year, department)
 - Content-hash deduplication during ingestion
 
 ### 🌐 Website Crawling
@@ -163,7 +164,7 @@ The complete 19-step retrieval and generation flow:
 5.  FAISS search → Top-K=6 nearest neighbors (cosine similarity)
 6.  Threshold filter → Discard below 0.65 → refusal if none survive
 7.  Deduplication → Remove by content hash
-8.  Authority-weighted scoring → authority level + source boost + intent boost
+8.  Authority + source-tier weighted scoring → authority level + source boost + intent boost
 9.  Adjusted threshold guard → top score < 0.55 → refusal
 10. Near-duplicate removal → Jaccard overlap > 0.90 → discard lower
 11. Adjacent chunk merging → Merge contiguous same-document chunks
@@ -358,6 +359,12 @@ python manage.py reindex_all [--force]
 | Regulations (R20, R23) | 🔴 High | ×1.15 |
 | Syllabi, Notices, Calendars | 🟡 Medium | ×1.05 |
 | Website Content, Social Media | 🟢 Low | ×1.00 |
+
+Source tiers applied during ranking:
+- primary_official: VVIT/VVITU official websites and institutional documents
+- secondary_linkedin: official and VVIT-related LinkedIn updates
+- tertiary_social: Instagram/Twitter/Facebook/YouTube/community updates
+- related_web: external supporting sources
 
 ### Supported Formats
 - **PDF** — via PyPDF2

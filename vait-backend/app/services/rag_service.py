@@ -41,6 +41,23 @@ SOURCE_TYPE_BOOST = {
     "pdf": 0.05,
 }
 
+SOURCE_TIER_BOOST = {
+    "primary_official": 0.06,
+    "secondary_linkedin": 0.03,
+    "tertiary_social": 0.01,
+    "related_web": 0.00,
+}
+
+OFFICIAL_DOMAINS = ("vvitguntur.com", "vvitu.ac.in")
+
+DYNAMIC_QUERY_KEYWORDS = {
+    "latest", "recent", "new", "happening", "happen", "happens",
+    "update", "updates", "news", "today", "currently", "ongoing",
+    "upcoming", "this week", "this month", "announcements",
+}
+
+RECENT_SOCIAL_DAYS = 60
+
 # ── Context optimization constants ──────────────────────────────────
 MAX_CONTEXT_CHUNKS = 4                 # Top-N highest quality chunks
 NEAR_DUPLICATE_SIMILARITY = 0.90       # Jaccard word-overlap threshold
@@ -86,7 +103,10 @@ INTENT_KEYWORDS: Dict[str, List[str]] = {
         "event", "events", "fest", "festival", "cultural",
         "technical", "hackathon", "workshop", "seminar",
         "webinar", "conference", "guest lecture", "sports",
-        "nss", "ncc", "club", "activity", "celebration",
+        "nss", "ncc", "club", "clubs", "activity", "celebration",
+        "sac", "student activity council", "latest", "recent",
+        "update", "updates", "ongoing", "upcoming", "happening",
+        "community", "communities",
     ],
     "infrastructure": [
         "hostel", "library", "lab", "laboratory", "bus",
@@ -109,6 +129,7 @@ class RetrievedChunk:
     url: str = ""
     source_type: str = ""
     document_type: str = ""
+    source_tier: str = ""
 
 
 @dataclass
@@ -294,6 +315,75 @@ class RAGService:
         while len(self._cache) > CACHE_CAPACITY:
             self._cache.popitem(last=False)
 
+    @staticmethod
+    def _is_dynamic_query(query: str) -> bool:
+        """Return True when a query asks for latest/current updates."""
+        q = query.lower()
+        return any(kw in q for kw in DYNAMIC_QUERY_KEYWORDS)
+
+    @staticmethod
+    def _infer_source_tier(metadata: Dict) -> str:
+        """
+        Infer source tier when explicit metadata is missing.
+
+        Priority order:
+          1. primary_official (official VVIT/VVITU websites and institutional docs)
+          2. secondary_linkedin (LinkedIn sources)
+          3. tertiary_social (Instagram/Twitter/Facebook/YouTube and other social)
+          4. related_web (extended web sources)
+        """
+        explicit = str(metadata.get("source_tier", "")).strip().lower()
+        if explicit in SOURCE_TIER_BOOST:
+            return explicit
+
+        url = str(metadata.get("url", "")).lower()
+        source_type = str(metadata.get("source_type", "")).lower()
+        document_type = str(metadata.get("document_type", "")).lower()
+        platform = str(metadata.get("platform", "")).lower()
+
+        if any(domain in url for domain in OFFICIAL_DOMAINS):
+            return "primary_official"
+
+        if document_type in {"regulation", "syllabus", "notice", "official_website"}:
+            return "primary_official"
+
+        if "linkedin.com" in url or platform == "linkedin":
+            return "secondary_linkedin"
+
+        if source_type == "social_media" or platform in {
+            "instagram", "twitter", "x", "facebook", "youtube"
+        }:
+            return "tertiary_social"
+
+        return "related_web"
+
+    @staticmethod
+    def _recency_boost_for_social(metadata: Dict) -> float:
+        """Add a freshness boost for recent social/linkedin posts."""
+        raw_date = str(metadata.get("date", "")).strip()
+        if not raw_date:
+            return 0.0
+
+        parsed_date = None
+        for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"):
+            try:
+                parsed_date = datetime.datetime.strptime(raw_date, fmt).date()
+                break
+            except ValueError:
+                continue
+
+        if parsed_date is None:
+            return 0.0
+
+        age_days = (datetime.date.today() - parsed_date).days
+        if age_days < 0:
+            return 0.0
+        if age_days <= RECENT_SOCIAL_DAYS:
+            return 0.03
+        if age_days <= 120:
+            return 0.01
+        return 0.0
+
     async def process_query(self, message: str) -> RAGResponse:
         """
         Process a user query through the strict RAG pipeline.
@@ -376,6 +466,7 @@ class RAGService:
                 is_refusal=True,
                 retrieval_scores=retrieval_scores,
                 intent=intent,
+                top_adjusted_score=max(retrieval_scores) if retrieval_scores else 0.0,
             )
             return RAGResponse(
                 reply=REFUSAL_MESSAGE,
@@ -393,7 +484,7 @@ class RAGService:
             if c.similarity_score >= self.settings.similarity_threshold
         ]
         qualified = self._deduplicate_chunks(qualified)
-        self._apply_authority_multiplier(qualified, intent=intent)
+        self._apply_authority_multiplier(qualified, intent=intent, query=message)
         qualified = self._sort_by_adjusted_score(qualified)
 
         # ── STRICT REFUSAL GUARD (adjusted_score) ────────────────────
@@ -406,6 +497,7 @@ class RAGService:
                 is_refusal=True,
                 retrieval_scores=retrieval_scores,
                 intent=intent,
+                top_adjusted_score=top_adjusted,
             )
             return RAGResponse(
                 reply=REFUSAL_MESSAGE,
@@ -515,6 +607,7 @@ class RAGService:
             is_refusal=False,
             retrieval_scores=retrieval_scores,
             intent=intent,
+            top_adjusted_score=top_adjusted,
         )
 
         return formatted
@@ -546,6 +639,7 @@ class RAGService:
                         url=meta.get("url", ""),
                         source_type=meta.get("source_type", ""),
                         document_type=meta.get("document_type", ""),
+                        source_tier=meta.get("source_tier", ""),
                     )
                 )
         return retrieved
@@ -577,7 +671,7 @@ class RAGService:
         chunks = self._search_index(query_embedding)
         t_retrieve = time.perf_counter()
 
-        self._apply_authority_multiplier(chunks, intent=intent)
+        self._apply_authority_multiplier(chunks, intent=intent, query=query)
 
         results = []
         for c in chunks:
@@ -626,55 +720,82 @@ class RAGService:
 
     # ── Intent-based source priority boosts ─────────────────────────
     INTENT_SOURCE_BOOST: Dict[str, Dict[str, float]] = {
-        "academic": {"pdf": 0.04, "official_website": 0.03},
-        "admissions": {"official_website": 0.05},
-        "examinations": {"pdf": 0.04, "official_website": 0.03},
-        "placements": {"official_website": 0.04, "social_media": 0.02},
-        "events": {"social_media": 0.05, "official_website": 0.02},
-        "infrastructure": {"official_website": 0.04},
+        "academic": {
+            "primary_official": 0.08,
+            "pdf": 0.04,
+            "official_website": 0.04,
+        },
+        "admissions": {
+            "primary_official": 0.10,
+            "official_website": 0.06,
+        },
+        "examinations": {
+            "primary_official": 0.08,
+            "pdf": 0.04,
+            "official_website": 0.04,
+        },
+        "placements": {
+            "primary_official": 0.05,
+            "secondary_linkedin": 0.05,
+            "tertiary_social": 0.02,
+            "official_website": 0.03,
+        },
+        "events": {
+            "secondary_linkedin": 0.07,
+            "tertiary_social": 0.05,
+            "primary_official": 0.03,
+            "social_media": 0.03,
+        },
+        "infrastructure": {
+            "primary_official": 0.08,
+            "official_website": 0.05,
+        },
     }
 
-    @staticmethod
+    @classmethod
     def _apply_authority_multiplier(
+        cls,
         chunks: List[RetrievedChunk],
         intent: str = "general",
+        query: str = "",
     ) -> None:
         """
-        Compute adjusted_score = similarity × multiplier + source_type boost + intent boost.
+        Compute adjusted score with source-priority-aware ranking.
 
-        Authority multipliers:
-          - high   = 1.15
-          - medium = 1.05
-          - low    = 1.00
-
-        Source-type boosts:
-          - document_type == "official_website" → +0.03
-          - source_type == "pdf"                → +0.05
-
-        Intent-based boosts (smart prioritization):
-          - academic/examinations  → boost pdf +0.04, official_website +0.03
-          - admissions             → boost official_website +0.05
-          - placements             → boost official_website +0.04, social_media +0.02
-          - events                 → boost social_media +0.05, official_website +0.02
-          - infrastructure         → boost official_website +0.04
+        Policy:
+          - Prefer official VVIT/VVITU sources by default.
+          - Prefer LinkedIn/social for dynamic event/update queries.
+          - Keep external related sources as supporting evidence only.
 
         Mutates each chunk in-place.
         """
-        intent_boosts = RAGService.INTENT_SOURCE_BOOST.get(intent, {})
+        intent_boosts = cls.INTENT_SOURCE_BOOST.get(intent, {})
+        dynamic_query = cls._is_dynamic_query(query)
 
         for c in chunks:
             multiplier = AUTHORITY_MULTIPLIER.get(c.authority_level, 1.0)
             base = c.similarity_score * multiplier
 
-            # Source-type bonus
+            # Source metadata
             boost = 0.0
             doc_type = c.metadata.get("document_type", c.document_type)
             src_type = c.metadata.get("source_type", c.source_type)
+            source_tier = cls._infer_source_tier(c.metadata)
+            c.source_tier = source_tier
 
-            if doc_type == "official_website":
+            # Base source weighting
+            boost += SOURCE_TIER_BOOST.get(source_tier, 0.0)
+
+            if doc_type == "official_website" or source_tier == "primary_official":
                 boost += 0.03
             if src_type == "pdf":
                 boost += 0.05
+            if source_tier in {"secondary_linkedin", "tertiary_social"}:
+                boost += cls._recency_boost_for_social(c.metadata)
+
+            # If the query asks for latest updates, emphasize social freshness.
+            if dynamic_query and source_tier in {"secondary_linkedin", "tertiary_social"}:
+                boost += 0.04
 
             # Intent-based dynamic boost
             if intent_boosts:
@@ -682,6 +803,8 @@ class RAGService:
                     boost += intent_boosts[doc_type]
                 if src_type in intent_boosts:
                     boost += intent_boosts[src_type]
+                if source_tier in intent_boosts:
+                    boost += intent_boosts[source_tier]
 
             c.adjusted_score = base + boost
 
@@ -846,7 +969,13 @@ class RAGService:
             "CONTEXT:\n"
             f"{context}\n\n"
             "USER QUESTION:\n"
-            f"{query}"
+            f"{query}\n\n"
+            "INSTRUCTIONS:\n"
+            "1. Answer ONLY from CONTEXT.\n"
+            "2. Prefer evidence in this order: primary_official > secondary_linkedin > tertiary_social > related_web.\n"
+            "3. If multiple sources conflict, prioritize the higher-order source and mention the conflict briefly.\n"
+            "4. If information is unclear or unavailable, reply exactly with: 'Based on available VVIT sources, this information is not clearly specified.'\n"
+            "5. Keep the response concise, student-friendly, and structured with title, explanation, key points, and sources."
         )
 
     @staticmethod
@@ -857,6 +986,7 @@ class RAGService:
             "academic_year",
             "department",
             "authority_level",
+            "source_tier",
         ]
         parts = [f"{f}={metadata[f]}" for f in fields if f in metadata]
         return ", ".join(parts)
@@ -1096,10 +1226,13 @@ class RAGService:
             # Determine the source type label
             source_type = c.source_type or c.metadata.get("source_type", "")
             doc_type = c.document_type or c.metadata.get("document_type", "")
+            source_tier = c.source_tier or c.metadata.get("source_tier", "")
 
-            if source_type == "social_media":
+            if source_tier == "secondary_linkedin":
+                type_label = "linkedin"
+            elif source_tier == "tertiary_social" or source_type == "social_media":
                 type_label = "social_media"
-            elif doc_type == "official_website" or source_type == "website":
+            elif source_tier == "primary_official" or doc_type == "official_website" or source_type == "website":
                 type_label = "website"
             elif source_type == "pdf" or doc_type in ("regulation", "syllabus"):
                 type_label = "pdf"
@@ -1125,6 +1258,7 @@ class RAGService:
         is_refusal: bool,
         retrieval_scores: List[float],
         intent: str = "general",
+        top_adjusted_score: float = 0.0,
     ) -> None:
         """
         Append a structured JSON-lines entry to data/logs/query.log.
@@ -1140,7 +1274,7 @@ class RAGService:
                 "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
                 "question": message[:500],
                 "top_similarity_score": round(max(retrieval_scores), 4) if retrieval_scores else 0.0,
-                "top_adjusted_score": round(max(retrieval_scores), 4) if retrieval_scores else 0.0,
+                "top_adjusted_score": round(top_adjusted_score, 4),
                 "confidence": confidence,
                 "sources": sources,
                 "is_refusal": is_refusal,
@@ -1166,7 +1300,8 @@ class RAGService:
             "1. NEVER hallucinate.\n"
             "2. NEVER guess.\n"
             "3. NEVER use outside knowledge.\n"
-            "4. If context is insufficient, REFUSE with the exact refusal message below.\n"
+            "4. Prioritize sources in this order: official VVIT/VVITU sources > LinkedIn > social > related web.\n"
+            "5. If context is insufficient or unclear, REFUSE with the exact message below.\n"
             f'   "{REFUSAL_MESSAGE}"\n\n'
             "RESPONSE STRUCTURE:\n"
             "1. Title (short, clear)\n"

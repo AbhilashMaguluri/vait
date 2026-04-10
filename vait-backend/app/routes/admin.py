@@ -21,7 +21,7 @@ from typing import List, Optional
 def _get_rag_service():
     """Lazy import to avoid circular dependency with app.main."""
     from app.main import get_rag_service
-    return _get_rag_service()
+    return get_rag_service()
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -34,6 +34,10 @@ class DocumentMetadata(BaseModel):
     document_type: str = Field(..., description="Type of document")
     academic_year: str = Field(..., description="Academic year")
     department: str = Field(..., description="Responsible department")
+    source_tier: Optional[str] = Field(
+        "primary_official",
+        description="Source tier: primary_official, secondary_linkedin, tertiary_social, related_web",
+    )
     authority_level: str = Field(
         ...,
         description="Authority level: official, department, or informational"
@@ -150,6 +154,7 @@ async def ingest_file(
     document_type: str = Form(...),
     academic_year: str = Form(...),
     department: str = Form(...),
+    source_tier: str = Form("primary_official"),
     authority_level: str = Form(...)
 ):
     """
@@ -184,6 +189,7 @@ async def ingest_file(
             "document_type": document_type,
             "academic_year": academic_year,
             "department": department,
+            "source_tier": source_tier,
             "authority_level": authority_level
         }]
         
@@ -306,6 +312,7 @@ async def reindex_websites(request: WebsiteReindexRequest = None):
             metadata_list.append({
                 "document_type": page.get("document_type", "website_page"),
                 "source_type": page.get("source_type", "website"),
+                "source_tier": page.get("source_tier", "primary_official"),
                 "authority_level": page.get("authority_level", "medium"),
                 "academic_year": "2025-26",
                 "department": "General",
@@ -370,6 +377,7 @@ async def ingest_social(request: SocialIngestRequest):
             metadata_list.append({
                 "document_type": entry.get("document_type", "announcement"),
                 "source_type": entry.get("source_type", "social_media"),
+                "source_tier": entry.get("source_tier", "tertiary_social"),
                 "authority_level": entry.get("authority_level", "low"),
                 "academic_year": "2025-26",
                 "department": "General",

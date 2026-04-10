@@ -262,6 +262,7 @@ def cmd_reindex_websites(args):
                 "metadata": {
                     "document_type": page.get("document_type", "official_website"),
                     "source_type": page.get("source_type", "website"),
+                    "source_tier": page.get("source_tier", "primary_official"),
                     "authority_level": page.get("authority_level", "medium"),
                     "url": page.get("url", ""),
                     "document_name": page.get("title", page.get("url", "website")),
@@ -351,6 +352,7 @@ def cmd_ingest_social(args):
                 "metadata": {
                     "document_type": entry.get("document_type", "announcement"),
                     "source_type": entry.get("source_type", "social_media"),
+                    "source_tier": entry.get("source_tier", "tertiary_social"),
                     "authority_level": entry.get("authority_level", "low"),
                     "platform": entry.get("platform", "unknown"),
                     "url": entry.get("url", ""),

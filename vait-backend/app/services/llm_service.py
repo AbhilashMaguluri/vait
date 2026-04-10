@@ -125,6 +125,6 @@ class LLMService:
             "3. Use this output structure exactly: Title, Explanation (2-4 sentences), "
             "Key Points (bullet points), Source(s).\n"
             "4. If sources conflict, prefer higher-authority sources in this order: "
-            "Regulations, Academic calendars, Syllabi/Notices, Website content, Social media.\n"
+            "Official VVIT/VVITU websites, LinkedIn sources, other social sources, then related web sources.\n"
             "5. Do not speculate, infer beyond the records, or use outside knowledge.\n"
         )
