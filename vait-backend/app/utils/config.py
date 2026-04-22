@@ -1,271 +1,180 @@
-"""
-VAIT Configuration Module
-Centralized configuration for the VAIT backend system.
+"""Centralized configuration for the VAIT backend."""
 
-This module defines all configuration constants and settings for the VAIT
-Retrieval-Augmented Generation system. All paths, thresholds, and operational
-parameters are defined here for consistency across the application.
+from __future__ import annotations
 
-Startup behaviour:
-  1. Load .env from project root using python-dotenv
-  2. Log configuration status
-"""
-
-import os
-import sys
 import logging
-from pathlib import Path
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
 from typing import List
 
 from dotenv import load_dotenv
-
-# =============================================================================
-# LOGGING
-# =============================================================================
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("vait.config")
 
-# =============================================================================
-# BASE PATHS
-# =============================================================================
 
-# Project root is vait-backend/
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# Load .env before anything else reads environment variables
 _dotenv_path = PROJECT_ROOT / ".env"
 _dotenv_loaded = load_dotenv(_dotenv_path)
 
-# Data directory structure
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DOCS_DIR = DATA_DIR / "raw_docs"
-VECTOR_STORE_DIR = DATA_DIR / "vector_store"
+VECTOR_STORE_DIR = PROJECT_ROOT / "vectorstore"
 LOGS_DIR = DATA_DIR / "logs"
-
-# Knowledge directory structure
-KNOWLEDGE_DIR = PROJECT_ROOT / "knowledge"
-
-# Watch directories (auto-ingestion)
 UPLOADS_DIR = PROJECT_ROOT / "uploads"
+KNOWLEDGE_DIR = PROJECT_ROOT / "knowledge"
 NOTICES_DIR = KNOWLEDGE_DIR / "notices"
 ANNOUNCEMENTS_DIR = PROJECT_ROOT / "announcements"
 SOCIAL_DIR = PROJECT_ROOT / "social"
-
-# Prompts directory
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 
-
-# =============================================================================
-# METADATA CONFIGURATION
-# =============================================================================
-
-# Document types (in order of authority)
 DOCUMENT_TYPES = [
-    "regulation",      # Official university regulations
-    "syllabus",        # Course syllabi and academic content
-    "notice",          # Official notices and announcements
-    "website"          # Website content and general information
+    "regulation",
+    "syllabus",
+    "notice",
+    "website",
+    "knowledge_source",
 ]
 
-# Authority levels (determines weight in retrieval)
 AUTHORITY_LEVELS = {
-    "high": 1.0,       # Regulations, official policies
-    "medium": 0.8,     # Academic calendar, department docs
-    "low": 0.6         # Website content, general info
+    "high": 1.0,
+    "medium": 0.8,
+    "low": 0.6,
 }
 
-# Required metadata fields for document ingestion
-# These fields must be provided when ingesting documents
 REQUIRED_METADATA_FIELDS = [
     "document_type",
     "academic_year",
     "department",
-    "authority_level"
+    "authority_level",
 ]
 
-# Additional metadata fields added during processing
-# source_file - added during ingestion
-# document_name - added during chunking
-# text/content - stored in chunk content
-
-# Question types for classification
 QUESTION_TYPES = {
     "factual": "Questions seeking specific facts or data",
     "policy": "Questions about institutional policies and regulations",
     "procedure": "Questions about processes and how to do things",
-    "definition": "Questions asking for definitions or explanations of terms"
+    "definition": "Questions asking for definitions or explanations of terms",
 }
-
-
-# =============================================================================
-# REFUSAL MESSAGE (MANDATORY)
-# =============================================================================
 
 REFUSAL_MESSAGE = (
     "Based on available VVIT sources, this information is not clearly specified."
 )
 
 
-# =============================================================================
-# SETTINGS CLASS
-# =============================================================================
-
 class Settings(BaseSettings):
-    """
-    Application settings loaded from environment variables.
-    
-    These settings control the behavior of the VAIT RAG system.
-    All paths are configured relative to the project root.
-    """
-    
-    # Application
-    app_name: str = "VAIT - Institutional University AI Assistant"
-    app_version: str = "1.0.0"
-    debug: bool = False
-    
-    # Ollama Configuration (fully offline LLM)
-    ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "phi3:mini"
-    embedding_model: str = "nomic-embed-text"
+    """Environment-backed application settings."""
 
-    # Groq Configuration (primary LLM)
-    groq_api_key: str
-    groq_model: str = "llama-3.3-70b"
-    groq_base_url: str = "https://api.groq.com/openai/v1"
-    
-    # ==========================================================================
-    # RAG v2 CONFIGURATION (PRODUCTION)
-    # ==========================================================================
-    
-    # Chunk size: ~400 tokens (~1600 characters)
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    app_name: str = "VAIT - Institutional University AI Assistant"
+    app_version: str = "2.0.0"
+    debug: bool = False
+    node_env: str = Field(default="development", alias="NODE_ENV")
+    port: int = Field(default=5000, alias="PORT")
+    api_prefix: str = "/api/vait"
+
+    mongodb_uri: str = Field(default="mongodb://localhost:27017/vait", alias="MONGODB_URI")
+    jwt_secret: str = Field(default="change-me-in-production", alias="JWT_SECRET")
+    jwt_expiry: str = Field(default="7d", alias="JWT_EXPIRY")
+
+    admin_username: str = Field(default="admin", alias="ADMIN_USERNAME")
+    admin_email: str = Field(default="admin@vvit.net", alias="ADMIN_EMAIL")
+    admin_password: str = Field(default="admin", alias="ADMIN_PASSWORD")
+
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
+    nvidia_api_key: str = Field(default="", alias="NVIDIA_API_KEY")
+
+    embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
+    embedding_dimension: int = 768
+
+    openai_model: str = "gpt-4o-mini"
+    groq_model: str = "llama3-70b-8192"
+    openrouter_model: str = "mistralai/mistral-7b-instruct"
+    nvidia_model: str = "meta/llama-3.1-70b-instruct"
+    groq_chat_completions_url: str = "https://api.groq.com/openai/v1/chat/completions"
+    openrouter_chat_completions_url: str = "https://openrouter.ai/api/v1/chat/completions"
+    openrouter_embeddings_url: str = "https://openrouter.ai/api/v1/embeddings"
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    groq_timeout_seconds: float = 12.0
+    openrouter_timeout_seconds: float = 18.0
+    embeddings_timeout_seconds: float = 20.0
+
+    default_llm_provider: str = "groq"
+    default_llm_model: str = "llama3-70b-8192"
+    default_temperature: float = 0.3
+    default_max_tokens: int = 800
+
     chunk_size: int = 400
     chunk_overlap: int = 50
-    
-    # Top-K retrieval: 6
     top_k_retrieval: int = 6
-    
-    # Strict similarity threshold - below this triggers refusal
     similarity_threshold: float = 0.65
-    
-    # Maximum context characters sent to LLM (prevent overflow)
     max_context_chars: int = 8000
-    
-    # ==========================================================================
-    # WEBSITE CRAWLER CONFIGURATION
-    # ==========================================================================
-    
-    # Allowed domains (crawler will NEVER leave these)
+
     allowed_domains: List[str] = [
         "vvitguntur.com",
         "www.vvitguntur.com",
         "vvitu.ac.in",
         "www.vvitu.ac.in",
     ]
-    
-    # Seed URLs for the website crawler
     crawl_seed_urls: List[str] = [
         "https://www.vvitguntur.com/",
         "https://www.vvitu.ac.in/",
     ]
-    
-    # Maximum crawl depth (0 = seed page only, 2 = two hops)
     crawl_depth_limit: int = 2
-    
-    # Maximum pages to crawl per run
     crawl_max_pages: int = 200
-    
-    # Seconds between HTTP requests (polite crawl)
     crawl_delay: float = 0.5
-    
-    # ==========================================================================
-    # AUTO-INGESTION CONFIGURATION
-    # ==========================================================================
-    
-    # Whether to reindex website content on server startup
+
     auto_reindex_on_startup: bool = False
-    
-    # Whether to start the file watcher on server startup
     auto_watch_enabled: bool = False
-    
-    # Directories monitored by the file watcher
     watch_directories: List[str] = [
         str(UPLOADS_DIR),
         str(NOTICES_DIR),
         str(ANNOUNCEMENTS_DIR),
         str(SOCIAL_DIR),
     ]
-    
-    # ==========================================================================
-    # VECTOR STORE PATHS
-    # ==========================================================================
-    
-    # FAISS index file path
+
+    vector_db_path: str = Field(default=str(VECTOR_STORE_DIR), alias="VECTOR_DB_PATH")
     faiss_index_path: str = str(VECTOR_STORE_DIR / "vait.index")
-    
-    # Metadata JSON file path (stores text + metadata per vector)
     metadata_path: str = str(VECTOR_STORE_DIR / "metadata.json")
-    
-    # ==========================================================================
-    # DATA PATHS
-    # ==========================================================================
-    
-    # Raw documents input directory
     raw_docs_path: str = str(RAW_DOCS_DIR)
-    
-    # Query logs output directory
     logs_path: str = str(LOGS_DIR)
-    
-    # System prompt file path
     system_prompt_path: str = str(PROMPTS_DIR / "vait_system_prompt.txt")
-    
-    # ==========================================================================
-    # API CONFIGURATION
-    # ==========================================================================
-    
-    api_prefix: str = "/api/vait"
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 @lru_cache()
 def get_settings() -> Settings:
-    """
-    Get cached settings instance.
-    
-    Uses lru_cache to ensure settings are only loaded once and reused
-    throughout the application lifecycle.
-    
-    Validates that critical configuration values are present and logs
-    the configuration status.
-    """
+    """Return the cached settings instance."""
+
     settings = Settings()
-
-    # ── Log configuration status ─────────────────────────────────────
     logger.info("Configuration loaded successfully")
-    logger.info("  .env file          : %s (loaded=%s)", _dotenv_path, _dotenv_loaded)
-    logger.info("  Ollama URL         : %s", settings.ollama_url)
-    logger.info("  LLM model          : %s", settings.ollama_model)
-    logger.info("  Groq model         : %s", settings.groq_model)
-    logger.info("  Groq base URL      : %s", settings.groq_base_url)
-    logger.info("  Groq key configured: %s", bool(settings.groq_api_key))
-    logger.info("  Embedding model    : %s", settings.embedding_model)
-    logger.info("  FAISS index path   : %s", settings.faiss_index_path)
-    logger.info("  Similarity thresh  : %.2f", settings.similarity_threshold)
-
+    logger.info("  .env file           : %s (loaded=%s)", _dotenv_path, _dotenv_loaded)
+    logger.info("  Environment         : %s", settings.node_env)
+    logger.info("  MongoDB URI         : %s", settings.mongodb_uri)
+    logger.info("  JWT expiry          : %s", settings.jwt_expiry)
+    logger.info("  Default admin email : %s", settings.admin_email)
+    logger.info("  Groq model          : %s", settings.groq_model)
+    logger.info("  Groq endpoint       : %s", settings.groq_chat_completions_url)
+    logger.info("  OpenRouter model    : %s", settings.openrouter_model)
+    logger.info("  OpenRouter endpoint : %s", settings.openrouter_chat_completions_url)
+    logger.info("  Groq key configured : %s", bool(settings.groq_api_key))
+    logger.info("  OpenRouter key cfgd : %s", bool(settings.openrouter_api_key))
+    logger.info("  Vector store path   : %s", settings.vector_db_path)
+    logger.info("  API prefix          : %s", settings.api_prefix)
     return settings
 
 
 def ensure_directories() -> None:
-    """
-    Ensure all required directories exist.
-    
-    Called during application startup to create necessary directories
-    if they don't already exist.
-    """
+    """Ensure required runtime directories exist."""
+
     directories = [
         DATA_DIR,
         RAW_DOCS_DIR,
@@ -277,12 +186,12 @@ def ensure_directories() -> None:
         KNOWLEDGE_DIR / "examinations",
         KNOWLEDGE_DIR / "syllabus",
         KNOWLEDGE_DIR / "departments",
-        KNOWLEDGE_DIR / "notices",
+        NOTICES_DIR,
         UPLOADS_DIR,
         ANNOUNCEMENTS_DIR,
         SOCIAL_DIR,
         PROMPTS_DIR,
     ]
-    
+
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)

@@ -11,7 +11,7 @@ Pipeline:
   3. Clean excessive whitespace / normalise line breaks
   4. Chunk text (~400 tokens ≈ 1600 characters, 200-char overlap)
   5. Derive metadata from folder name + file name
-  6. Generate embeddings via Ollama nomic-embed-text
+    6. Generate embeddings via OpenRouter embeddings API
   7. Build FAISS index (cosine similarity via IndexFlatIP + L2-norm)
   8. Persist:
      - data/vector_store/vait.index   (FAISS binary)
@@ -63,8 +63,8 @@ METADATA_JSON_PATH = VECTOR_STORE_DIR / "metadata.json"
 INGESTION_LOG_PATH = LOGS_DIR / "ingestion.log"
 
 # Embedding config
-EMBEDDING_MODEL = "nomic-embed-text"
-EMBEDDING_DIMENSION = 768  # nomic-embed-text output dimension
+EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
+EMBEDDING_DIMENSION = 768
 EMBEDDING_BATCH_SIZE = 100  # max texts per batch
 
 # Chunking config (character-based: 1 token ≈ 4 characters)
@@ -481,24 +481,25 @@ def generate_embeddings(
     batch_size: int = EMBEDDING_BATCH_SIZE,
 ) -> np.ndarray:
     """
-    Generate embeddings for a list of texts using Ollama.
+    Generate embeddings for a list of texts using the configured embedding service.
 
     Automatically batches for efficiency.
     Returns ndarray of shape (len(texts), EMBEDDING_DIMENSION), dtype float32.
     """
     # Import here to avoid circular dependency at module level
     sys.path.insert(0, str(PROJECT_ROOT))
-    from app.services.ollama_service import OllamaService
+    from app.services.embedding_service import EmbeddingService
+    from app.utils.config import get_settings
 
-    ollama = OllamaService()
+    embedding_service = EmbeddingService(get_settings())
     all_embeddings = []
 
     for start in range(0, len(texts), batch_size):
         batch = texts[start : start + batch_size]
         batch_label = f"{start + 1}–{min(start + batch_size, len(texts))} of {len(texts)}"
-        logger.info("Embedding batch %s via Ollama", batch_label)
+        logger.info("Embedding batch %s via embedding service", batch_label)
 
-        emb = ollama.embed_batch(batch)
+        emb = embedding_service.get_embeddings_sync(batch)
         all_embeddings.append(emb)
 
     arr = np.vstack(all_embeddings).astype(np.float32)

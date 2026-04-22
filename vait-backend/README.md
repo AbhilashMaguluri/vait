@@ -24,8 +24,8 @@ VAIT is an institutional AI assistant that provides accurate information exclusi
 | Language | Python 3.10+ |
 | API Framework | FastAPI |
 | Vector Store | **FAISS** (THE PRIMARY DATABASE) |
-| Embeddings | Ollama nomic-embed-text (768 dimensions) |
-| LLM | Groq llama-3.3-70b (primary) + Ollama phi3:mini (fallback) |
+| Embeddings | OpenRouter nomic-ai/nomic-embed-text-v1.5 (768 dimensions) |
+| LLM | Groq llama3-70b-8192 (primary) + OpenRouter mistralai/mistral-7b-instruct (fallback) |
 
 **Explicitly NOT used for vector/database:** JavaScript, Node.js, ChromaDB, Pinecone
 
@@ -44,7 +44,7 @@ vait-backend/
 │   │   └── chat_controller.py     # Business logic for chat
 │   ├── services/
 │   │   ├── rag_service.py         # Main RAG implementation
-│   │   ├── llm_service.py         # Groq primary + Ollama fallback integration
+│   │   ├── llm_service.py         # Groq primary + OpenRouter fallback integration
 │   │   └── embedding_service.py   # Embedding generation
 │   └── utils/
 │       ├── config.py              # Centralized configuration
@@ -139,21 +139,16 @@ Create a `.env` file in `vait-backend/`:
 ```env
 # Groq primary LLM configuration
 GROQ_API_KEY=your_api_key_here
-GROQ_MODEL=llama-3.3-70b
-GROQ_BASE_URL=https://api.groq.com/openai/v1
+GROQ_MODEL=llama3-70b-8192
+GROQ_CHAT_COMPLETIONS_URL=https://api.groq.com/openai/v1/chat/completions
 
-# Ollama fallback LLM + embeddings
-OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=phi3:mini
-EMBEDDING_MODEL=nomic-embed-text
+# OpenRouter fallback LLM + embeddings
+OPENROUTER_API_KEY=your_openrouter_key_here
+OPENROUTER_MODEL=mistralai/mistral-7b-instruct
+OPENROUTER_CHAT_COMPLETIONS_URL=https://openrouter.ai/api/v1/chat/completions
+EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5
+OPENROUTER_EMBEDDINGS_URL=https://openrouter.ai/api/v1/embeddings
 DEBUG=false
-```
-
-### 4b. Pull Ollama Models
-
-```powershell
-ollama pull phi3:mini
-ollama pull nomic-embed-text
 ```
 
 ### 5. Run the Application
@@ -278,7 +273,7 @@ Health check endpoint.
 ```
 POST /api/vait/chat
      ↓
-1. Embed question (Ollama nomic-embed-text, 768-dim)
+1. Embed question (OpenRouter nomic-ai/nomic-embed-text-v1.5, 768-dim)
      ↓
 2. Search FAISS (top-k=6, cosine similarity)
      ↓
@@ -290,7 +285,7 @@ POST /api/vait/chat
      ↓
 6. Build grounded prompt
      ↓
-7. Call LLM (Groq llama-3.3-70b, fallback to Ollama phi3:mini)
+7. Call LLM (Groq llama3-70b-8192, fallback to OpenRouter mistralai/mistral-7b-instruct)
      ↓
 8. Hallucination guard + response polish
      ↓

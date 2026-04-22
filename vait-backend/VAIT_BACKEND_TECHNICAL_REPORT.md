@@ -3,7 +3,7 @@
 > **Version:** 2.0 (Production-Grade RAG)
 > **Author:** VAIT Engineering Team
 > **Date:** February 2026
-> **Stack:** Python 3.10+ · FastAPI · FAISS · Sentence-Transformers / OpenAI Embeddings · Ollama (LLM)
+> **Stack:** Python 3.10+ · FastAPI · FAISS · OpenRouter Embeddings · Groq (primary LLM) + OpenRouter (fallback LLM)
 
 ---
 
@@ -45,12 +45,12 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
 - **Privacy** — institutional documents never leave the server
 - `all-MiniLM-L6-v2` provides strong semantic similarity at 384 dimensions with minimal compute
 
-### Why Ollama?
+### Why Groq + OpenRouter Fallback?
 
-- **Fully local LLM inference** — no OpenAI API key required in production
-- **Model flexibility** — swap between Mistral, LLaMA, Phi, etc. via config
-- **Data sovereignty** — queries and responses never leave the institution's network
-- **Cost** — zero marginal cost per query after hardware investment
+- **Reliability** — primary Groq generation with automatic OpenRouter fallback
+- **Cloud scalability** — handles production traffic without local model hosting
+- **Provider resilience** — graceful degradation across provider outages/timeouts
+- **Operational simplicity** — no local model runtime management in production
 
 ---
 
@@ -84,7 +84,7 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
 │                                              │                         │
 │                                              ▼                         │
 │                                   ┌──────────────────────┐             │
-│                                   │     LLM (Ollama)      │             │
+│                                   │ LLM (Groq/OpenRouter) │             │
 │                                   │  System + User Prompt  │             │
 │                                   └──────────┬───────────┘             │
 │                                              │                         │
@@ -360,12 +360,12 @@ FAISS is the right choice for an institutional system with tens of thousands of 
 - **Reliability:** Works during internet outages
 - **Compliance:** Simplifies data handling — no third-party data processing agreements
 
-### 7.3 Why No External API?
+### 7.3 Why External APIs with Fallback?
 
-- **Privacy:** Student regulations, internal notices, and grade policies are sensitive
-- **Cost predictability:** No per-token billing surprises
-- **Independence:** The system runs on institutional hardware with no vendor lock-in
-- **Latency:** Local inference avoids network round-trips
+- **Availability:** Multi-provider strategy reduces outage impact
+- **Performance:** Managed inference endpoints provide lower operational overhead
+- **Simplicity:** Avoids maintaining local LLM serving infrastructure
+- **Resilience:** Automatic fallback protects user experience during provider failures
 
 ---
 
@@ -400,7 +400,7 @@ Empirically determine the optimal similarity threshold by evaluating against a l
 
 ### 8.6 Streaming Responses
 
-Implement Server-Sent Events (SSE) for real-time token streaming from Ollama, reducing perceived latency for long answers.
+Implement Server-Sent Events (SSE) for real-time token streaming from provider APIs, reducing perceived latency for long answers.
 
 ### 8.7 Multi-Language Support
 

@@ -167,20 +167,11 @@ def create_app() -> FastAPI:
             "service": "VAIT — Institutional University AI Assistant",
             "version": settings.app_version,
             "status": "operational" if rag_service else "degraded",
-            "engine": "FAISS + Ollama RAG Pipeline (fully offline)",
-            "llm_model": settings.ollama_model,
+            "engine": "FAISS + Groq/OpenRouter RAG Pipeline",
+            "llm_primary_model": settings.groq_model,
+            "llm_fallback_model": settings.openrouter_model,
             "embedding_model": settings.embedding_model,
         }
-
-        # Ollama connectivity check
-        try:
-            import requests as _req
-            _req.get("http://localhost:11434", timeout=3)
-            ollama_running = True
-        except Exception:
-            ollama_running = False
-
-        base["ollama_running"] = ollama_running
 
         if rag_service is not None:
             stats = rag_service.get_stats()

@@ -1605,7 +1605,7 @@ class RAGService:
             # Identity
             "system_name": "VAIT — Institutional University AI Assistant",
             "version": self.settings.app_version,
-            "engine": "FAISS IndexFlatIP + Ollama RAG Pipeline",
+            "engine": "FAISS IndexFlatIP + Groq/OpenRouter RAG Pipeline",
             "status": "operational",
 
             # Knowledge coverage
@@ -1623,7 +1623,8 @@ class RAGService:
 
             # Model configuration
             "models": {
-                "llm": self.settings.ollama_model,
+                "llm_primary": self.settings.groq_model,
+                "llm_fallback": self.settings.openrouter_model,
                 "embedding": self.settings.embedding_model,
                 "embedding_dimension": self.embedding_service.embedding_dimension,
                 "chunk_size_tokens": self.settings.chunk_size,

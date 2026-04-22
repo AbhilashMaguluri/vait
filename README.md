@@ -2,7 +2,7 @@
 
 > **"We Never Let You Wait for Anything."**
 
-VAIT is a production-grade **Retrieval-Augmented Generation (RAG)** AI assistant built for **Vasireddy Venkatadri International Technology (VVIT)**. It delivers accurate, source-cited answers about academic calendars, regulations, syllabi, notices, examinations, placements, departments, and more — all powered by local LLM inference with zero cloud dependency.
+VAIT is a production-grade **Retrieval-Augmented Generation (RAG)** AI assistant built for **Vasireddy Venkatadri International Technology (VVIT)**. It delivers accurate, source-cited answers about academic calendars, regulations, syllabi, notices, examinations, placements, departments, and more — powered by cloud LLM providers with robust fallback.
 
 VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowledge retrieval system** that refuses to answer when context is insufficient, never guesses, and never fabricates information.
 
@@ -34,7 +34,8 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
 | **Uvicorn** | 0.27.1 | ASGI server |
 | **Pydantic** | 2.6.1 | Data validation & settings |
 | **FAISS (faiss-cpu)** | 1.7.4 | Vector similarity search |
-| **Ollama** | External | Local LLM inference (phi3:mini) + embeddings (nomic-embed-text) |
+| **Groq API** | External | Primary LLM inference (llama3-70b-8192) |
+| **OpenRouter API** | External | Fallback LLM inference + embeddings |
 | **NumPy** | 1.26.4 | Numerical operations |
 | **PyPDF2** | 3.0.1 | PDF text extraction |
 | **python-docx** | 1.1.0 | DOCX text extraction |
@@ -67,21 +68,21 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
                                  │                                          │
                                  │   ┌────────────┐   ┌────────────────┐   │
                                  │   │ Embedding   │   │  LLM Service   │   │
-                                 │   │ Service     │   │  (Ollama)      │   │
+                                 │   │ Service     │   │ Groq+Fallback  │   │
                                  │   └──────┬──────┘   └───────┬────────┘   │
                                  │          │                  │             │
                                  │          ▼                  ▼             │
                                  │   ┌───────────┐    ┌──────────────┐      │
-                                 │   │  FAISS    │    │   Ollama     │      │
-                                 │   │  Index    │    │  (localhost  │      │
-                                 │   │  (disk)   │    │   :11434)    │      │
+                                 │   │  FAISS    │    │ Groq/OpenRT  │      │
+                                 │   │  Index    │    │   APIs       │      │
+                                 │   │  (disk)   │    │              │      │
                                  │   └───────────┘    └──────────────┘      │
                                  └──────────────────────────────────────────┘
 ```
 
 **Design Principles:**
 - **Clean separation** — Routes → Controllers → Services
-- **Fully offline** — FAISS + Ollama = no internet required
+- **Cloud-capable** — Groq primary with OpenRouter fallback
 - **Data sovereignty** — All documents and queries stay on institutional hardware
 - **Zero hallucination** — Strict retrieval threshold + authority hierarchy + refusal mechanism
 
@@ -160,7 +161,7 @@ The complete 19-step retrieval and generation flow:
 1.  Query arrives → Normalize (expand shorthand)
 2.  Cache check → LRU cache with 600s TTL
 3.  Intent classification → Rule-based keyword matching (6 categories)
-4.  Embedding → Ollama nomic-embed-text (768 dimensions)
+4.  Embedding → OpenRouter nomic-ai/nomic-embed-text-v1.5 (768 dimensions)
 5.  FAISS search → Top-K=6 nearest neighbors (cosine similarity)
 6.  Threshold filter → Discard below 0.65 → refusal if none survive
 7.  Deduplication → Remove by content hash
@@ -169,7 +170,7 @@ The complete 19-step retrieval and generation flow:
 10. Near-duplicate removal → Jaccard overlap > 0.90 → discard lower
 11. Adjacent chunk merging → Merge contiguous same-document chunks
 12. Context cap → Top 4 chunks, max 8000 characters
-13. LLM generation → Ollama phi3:mini with system prompt
+13. LLM generation → Groq llama3-70b-8192 with OpenRouter fallback
 14. Hallucination guard → Post-generation validation
 15. Answer structure enforcement → Title, explanation, bullets, sources
 16. Response polish → Clean spacing, dedup sentences, 600-word cap
@@ -196,8 +197,9 @@ vait/
 │   │   │   └── admin.py               # Admin API routes
 │   │   ├── services/
 │   │   │   ├── embedding_service.py   # FAISS index & embeddings
-│   │   │   ├── llm_service.py         # Ollama LLM interaction
-│   │   │   ├── ollama_service.py      # Ollama health & helpers
+│   │   │   ├── llm_service.py         # Groq primary + OpenRouter fallback
+│   │   │   ├── groq_service.py        # Groq provider client
+│   │   │   ├── openrouter_service.py  # OpenRouter provider client
 │   │   │   ├── rag_service.py         # Full RAG pipeline
 │   │   │   ├── website_crawler.py     # Domain-restricted web crawler
 │   │   │   ├── social_ingestor.py     # Social media JSON ingestion
@@ -291,8 +293,8 @@ vait/
 
 - **Python 3.10+**
 - **Node.js 18+**
-- **Ollama** installed and running at `localhost:11434`
-  - Models required: `phi3:mini` (LLM), `nomic-embed-text` (embeddings)
+- **Groq API key** for primary generation (`GROQ_API_KEY`)
+- **OpenRouter API key** for fallback generation and embeddings (`OPENROUTER_API_KEY`)
 
 ### Backend Setup
 
@@ -306,9 +308,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Pull Ollama models
-ollama pull phi3:mini
-ollama pull nomic-embed-text
+# Configure provider keys in .env
+# GROQ_API_KEY=...
+# OPENROUTER_API_KEY=...
 
 # Ingest documents into the knowledge base
 python scripts/ingest_documents.py
@@ -383,9 +385,9 @@ Key settings managed via `.env` + Pydantic Settings:
 
 | Setting | Default | Description |
 |---|---|---|
-| Ollama URL | `localhost:11434` | Ollama server address |
-| LLM Model | `phi3:mini` | Language model for generation |
-| Embedding Model | `nomic-embed-text` | Embedding model (768-dim) |
+| LLM Primary Model | `llama3-70b-8192` | Groq generation model |
+| LLM Fallback Model | `mistralai/mistral-7b-instruct` | OpenRouter fallback model |
+| Embedding Model | `nomic-ai/nomic-embed-text-v1.5` | OpenRouter embedding model (768-dim) |
 | Embedding Dimensions | `768` | Vector dimensions |
 | Similarity Threshold | `0.65` | Minimum retrieval score |
 | Adjusted Threshold | `0.55` | Minimum authority-weighted score |
@@ -405,15 +407,15 @@ Key settings managed via `.env` + Pydantic Settings:
 ## 📝 Changelog
 
 ### v1.1.0 — Model Migration (February 2026)
-- **Switched LLM from Mistral to phi3:mini** for better RAM efficiency
-- Centralized model configuration in `config.py` + `.env`
-- Added memory error handling (graceful response when model exceeds available RAM)
-- Removed all OpenAI references (fully offline, no API keys needed)
-- Cleaned legacy fallback logic
+- **Switched to Groq primary + OpenRouter fallback** for cloud reliability
+- Centralized provider configuration in `config.py` + `.env`
+- Added explicit provider timeouts and fallback logging
+- Removed local model fallback logic
+- Standardized graceful unavailable response when providers fail
 
 ### v1.0.0 — Initial Release (February 2026)
 - Full RAG pipeline with 19-step processing
-- FastAPI backend with FAISS vector store & Ollama integration
+- FastAPI backend with FAISS vector store and provider-based LLM integration
 - React 19 frontend with Vite 7
 - Document ingestion (PDF, DOCX, TXT)
 - Website crawler (domain-restricted to VVIT)

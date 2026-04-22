@@ -42,7 +42,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 import faiss
 import numpy as np
 
-from app.services.ollama_service import OllamaService, EMBEDDING_DIMENSION as _OLLAMA_EMBED_DIM
+from app.services.embedding_service import EmbeddingService, EMBEDDING_DIMENSION as _EMBEDDING_DIM
 
 from app.utils.config import (
     Settings,
@@ -82,8 +82,8 @@ logger.addHandler(_fh)
 # ── Constants ────────────────────────────────────────────────────────
 FAISS_INDEX_PATH = VECTOR_STORE_DIR / "vait.index"
 METADATA_JSON_PATH = VECTOR_STORE_DIR / "metadata.json"
-EMBEDDING_MODEL = "nomic-embed-text"
-EMBEDDING_DIMENSION = _OLLAMA_EMBED_DIM
+EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
+EMBEDDING_DIMENSION = _EMBEDDING_DIM
 EMBEDDING_BATCH_SIZE = 50
 
 CHUNK_CHARS = 1600
@@ -143,8 +143,8 @@ def _save_index(index, chunks):
     logger.info("Saved: %d chunks  → %s", len(chunks), METADATA_JSON_PATH)
 
 
-def _embed_texts(ollama: OllamaService, texts: List[str]) -> np.ndarray:
-    """Generate embeddings in batches via Ollama."""
+def _embed_texts(embedding_service: EmbeddingService, texts: List[str]) -> np.ndarray:
+    """Generate embeddings in batches via the configured embedding service."""
     all_embeddings = []
     total = len(texts)
 
@@ -152,7 +152,7 @@ def _embed_texts(ollama: OllamaService, texts: List[str]) -> np.ndarray:
         batch = texts[start: start + EMBEDDING_BATCH_SIZE]
         label = f"{start + 1}–{min(start + EMBEDDING_BATCH_SIZE, total)}/{total}"
         logger.info("Embedding batch %s", label)
-        emb = ollama.embed_batch(batch)
+        emb = embedding_service.get_embeddings_sync(batch)
         all_embeddings.append(emb)
 
     return np.vstack(all_embeddings).astype(np.float32)
@@ -177,6 +177,7 @@ def cmd_reindex_websites(args):
     """
     t0 = time.time()
     settings = get_settings()
+    embedding_service = EmbeddingService(settings)
 
     domains = settings.allowed_domains
     seed_urls = settings.crawl_seed_urls
@@ -230,9 +231,8 @@ def cmd_reindex_websites(args):
             # Rebuild FAISS index without website embeddings
             # We need to re-embed remaining chunks
             if chunks:
-                ollama = OllamaService()
                 texts = [c["content"] for c in chunks]
-                embeddings = _embed_texts(ollama, texts)
+                embeddings = _embed_texts(embedding_service, texts)
                 faiss.normalize_L2(embeddings)
                 index = faiss.IndexFlatIP(EMBEDDING_DIMENSION)
                 index.add(embeddings)
@@ -283,9 +283,8 @@ def cmd_reindex_websites(args):
         return
 
     # ── Embed ────────────────────────────────────────────────────────
-    ollama = OllamaService()
     texts = [c["content"] for c in new_chunks]
-    embeddings = _embed_texts(ollama, texts)
+    embeddings = _embed_texts(embedding_service, texts)
     faiss.normalize_L2(embeddings)
 
     # ── Append to FAISS ──────────────────────────────────────────────
@@ -311,6 +310,7 @@ def cmd_ingest_social(args):
     """Ingest social media JSON files from social/ directory."""
     t0 = time.time()
     settings = get_settings()
+    embedding_service = EmbeddingService(settings)
 
     social_dir = Path(args.directory) if args.directory else SOCIAL_DIR
     social_dir.mkdir(parents=True, exist_ok=True)
@@ -374,9 +374,8 @@ def cmd_ingest_social(args):
         return
 
     # ── Embed ────────────────────────────────────────────────────────
-    ollama = OllamaService()
     texts = [c["content"] for c in new_chunks]
-    embeddings = _embed_texts(ollama, texts)
+    embeddings = _embed_texts(embedding_service, texts)
     faiss.normalize_L2(embeddings)
 
     # ── Append to FAISS ──────────────────────────────────────────────

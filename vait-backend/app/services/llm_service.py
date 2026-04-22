@@ -1,32 +1,28 @@
-"""VAIT LLM Service — Groq primary generation with Ollama fallback."""
+"""VAIT LLM Service with Groq primary and OpenRouter fallback."""
 
 import logging
 from typing import List
 
-from openai import OpenAI
-
-from app.services.ollama_service import OllamaService
+from app.services.groq_service import GroqService
+from app.services.openrouter_service import OpenRouterService
 from app.utils.config import Settings
 
 logger = logging.getLogger("vait.llm")
-SAFE_UNAVAILABLE_MESSAGE = "AI service is currently unavailable. Please try again later."
+SAFE_UNAVAILABLE_MESSAGE = "AI service is currently unavailable."
 
 
 class LLMService:
-    """Service for generating responses using Groq with Ollama fallback."""
+    """Service for generating responses using Groq with OpenRouter fallback."""
 
     def __init__(self, settings: Settings):
         """Initialize the LLM service."""
         self.settings = settings
-        self.groq_client = OpenAI(
-            api_key=settings.groq_api_key,
-            base_url=settings.groq_base_url,
-        )
-        self.fallback_llm = OllamaService(model=settings.ollama_model)
+        self.groq = GroqService(settings)
+        self.openrouter = OpenRouterService(settings)
 
     def generate(self, system_prompt: str, user_prompt: str) -> str:
         """
-        Generate a response using Groq as primary and Ollama as fallback.
+        Generate a response using Groq as primary and OpenRouter as fallback.
 
         Args:
             system_prompt: System-level policy and guardrails.
@@ -36,30 +32,14 @@ class LLMService:
             Model response text, or a safe availability message.
         """
         logger.info("Starting LLM generation with Groq model: %s", self.settings.groq_model)
+        full_prompt = f"{system_prompt}\n\n{user_prompt}".strip()
 
         try:
-            response = self.groq_client.chat.completions.create(
-                model=self.settings.groq_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.3,
-                max_tokens=800,
-            )
-            content = (response.choices[0].message.content or "").strip()
-            if not content:
-                raise RuntimeError("Groq returned an empty response")
-
-            logger.info("Groq response generation succeeded (%d chars)", len(content))
-            return content
+            return self.groq.generate(full_prompt)
         except Exception as exc:
             logger.error("Groq generation failed: %s", exc, exc_info=True)
-            logger.warning(
-                "Using Ollama fallback model after Groq failure: %s",
-                self.settings.ollama_model,
-            )
-            return self._generate_with_fallback(system_prompt, user_prompt)
+            logger.warning("Fallback triggered: switching to OpenRouter after Groq failure")
+            return self._generate_with_openrouter(full_prompt)
 
     async def generate_response(
         self,
@@ -84,20 +64,13 @@ class LLMService:
             user_prompt=contextual_prompt,
         )
 
-    def _generate_with_fallback(self, system_prompt: str, user_prompt: str) -> str:
-        """Generate with Ollama fallback and return a safe message on failure."""
-        fallback_prompt = f"{system_prompt}\n\n{user_prompt}"
+    def _generate_with_openrouter(self, prompt: str) -> str:
+        """Generate with OpenRouter fallback and return a safe message on failure."""
 
         try:
-            response = self.fallback_llm.generate(fallback_prompt)
-            response = (response or "").strip()
-            if not response:
-                raise RuntimeError("Ollama fallback returned an empty response")
-
-            logger.info("Ollama fallback generation succeeded (%d chars)", len(response))
-            return response
+            return self.openrouter.generate(prompt)
         except Exception as exc:
-            logger.error("Ollama fallback failed: %s", exc, exc_info=True)
+            logger.error("OpenRouter fallback failed: %s", exc, exc_info=True)
             return SAFE_UNAVAILABLE_MESSAGE
 
     def _build_contextual_prompt(
