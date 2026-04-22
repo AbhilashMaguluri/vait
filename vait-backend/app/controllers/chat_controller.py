@@ -66,6 +66,22 @@ class ChatController:
             intent=response.intent,
         )
 
+    async def process_message_stream(
+        self,
+        message: str,
+        department: Optional[str] = None,
+        academic_year: Optional[str] = None,
+    ):
+        """Process a user message through the RAG pipeline with streaming."""
+        rag_service = _get_rag_service()
+        if rag_service is None:
+            import json
+            yield f'data: {json.dumps({"type": "error", "error": "The VAIT system is currently initializing. Please try again in a moment."})}\n\n'
+            return
+
+        async for chunk in rag_service.process_query_stream(message):
+            yield chunk
+
     async def debug_retrieve(self, query: str) -> Dict:
         """
         Run retrieval diagnostics (no LLM call).

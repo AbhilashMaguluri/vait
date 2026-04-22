@@ -101,6 +101,8 @@ def get_chat_controller() -> ChatController:
 
 # ── Endpoints ──
 
+from fastapi.responses import StreamingResponse
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
@@ -142,6 +144,24 @@ async def chat(
             detail="An error occurred processing your request. Please try again.",
         )
 
+
+@router.post("/chat/stream")
+async def chat_stream(
+    request: ChatRequest,
+    controller: ChatController = Depends(get_chat_controller),
+):
+    """
+    Process a chat message with streaming response (SSE).
+    """
+    logger.info("Incoming stream chat request: %s", request.message)
+    return StreamingResponse(
+        controller.process_message_stream(
+            message=request.message,
+            department=request.department,
+            academic_year=request.academic_year,
+        ),
+        media_type="text/event-stream"
+    )
 
 @router.post("/chat/detailed", response_model=ChatDetailedResponse)
 async def chat_detailed(

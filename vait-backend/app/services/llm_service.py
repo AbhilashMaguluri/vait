@@ -92,12 +92,33 @@ class LLMService:
             "USER QUESTION:\n"
             f"{user_message}\n\n"
             "INSTRUCTIONS:\n"
-            "1. Answer ONLY using the RETRIEVED INSTITUTIONAL RECORDS above.\n"
-            "2. If the records do not contain sufficient information, respond "
-            "with the exact refusal message from your system prompt.\n"
-            "3. Use this output structure exactly: Title, Explanation (2-4 sentences), "
-            "Key Points (bullet points), Source(s).\n"
-            "4. If sources conflict, prefer higher-authority sources in this order: "
+            "1. Answer the user's question using the RETRIEVED INSTITUTIONAL RECORDS above whenever applicable.\n"
+            "2. Use this output structure exactly: Title, Explanation (2-4 sentences), "
+            "Key Points (bullet points), Source(s) (if used).\n"
+            "3. If sources conflict, prefer higher-authority sources in this order: "
             "Official VVIT/VVITU websites, LinkedIn sources, other social sources, then related web sources.\n"
-            "5. Do not speculate, infer beyond the records, or use outside knowledge.\n"
         )
+
+    async def generate_stream(self, system_prompt: str, user_prompt: str):
+        full_prompt = f"{system_prompt}\n\n{user_prompt}".strip()
+        logger.info("Starting streaming LLM generation with Groq model: %s", self.settings.groq_model)
+        
+        fallback_needed = False
+        try:
+            async for chunk in self.groq.generate_stream(full_prompt):
+                yield chunk
+            logger.info("Groq stream completed successfully")
+        except Exception as exc:
+            logger.error("Groq streaming failed mid-way: %s", exc)
+            fallback_needed = True
+
+        if fallback_needed:
+            logger.warning("Fallback triggered: switching to OpenRouter after Groq streaming failure")
+            yield "[FALLBACK_TRIGGERED]"
+            try:
+                async for chunk in self.openrouter.generate_stream(full_prompt):
+                    yield chunk
+                logger.info("OpenRouter stream completed successfully")
+            except Exception as exc:
+                logger.error("OpenRouter fallback streaming failed: %s", exc)
+                yield "\n\nAI service is currently unavailable."

@@ -33,7 +33,10 @@ export default function MessageBubble({ message }) {
           <h4 className="message-heading">{message.heading}</h4>
         )}
 
-        <p className="message-text">{message.text}</p>
+        <p className="message-text">
+          {message.text}
+          {!isUser && message.isGenerating && <span className="blinking-cursor">█</span>}
+        </p>
 
         {!isUser && message.bullets && message.bullets.length > 0 && (
           <ul className="message-bullets">

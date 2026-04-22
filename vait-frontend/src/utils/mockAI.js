@@ -161,4 +161,119 @@ export async function sendMessageToVAIT({ message, department, academicYear }) {
   }
 }
 
+/**
+ * Stream user message from the VAIT backend API.
+ */
+export async function streamMessageToVAIT({ message, department, academicYear, onUpdate }) {
+  console.log('[VAIT] Streaming message:', message);
+  const endpoint = buildApiUrl('/api/vait/chat/stream');
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        department: department || null,
+        academic_year: academicYear || null,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Backend returned ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    let state = {
+      text: '',
+      heading: null,
+      bullets: null,
+      sources: [],
+      confidence: 'Low',
+      category: detectCategory(message),
+      department: department || 'General',
+      academicYear: academicYear || '2025-26',
+      timestamp: new Date().toISOString(),
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.trim().startsWith('data: ')) {
+          const dataStr = line.replace(/^data:\s*/, '').trim();
+          if (!dataStr || dataStr === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(dataStr);
+            if (parsed.type === 'metadata') {
+              state.sources = parsed.sources || [];
+              state.confidence = parsed.confidence || 'Low';
+              if (parsed.intent) state.category = parsed.intent;
+              onUpdate({ ...state, isGenerating: true });
+            } else if (parsed.type === 'content') {
+              state.text += parsed.content;
+              onUpdate({ ...state, isGenerating: true });
+            } else if (parsed.type === 'fallback_triggered') {
+              state.text = ''; // Clear output on fallback to avoid duplicates
+              onUpdate({ ...state, isGenerating: true });
+            } else if (parsed.type === 'error') {
+              state.text += `\n\n[Error: ${parsed.error}]`;
+              onUpdate({ ...state, isGenerating: false });
+            } else if (parsed.type === 'done') {
+              onUpdate({ ...state, isGenerating: false });
+            }
+          } catch (e) {
+            console.error('Error parsing stream chunk', e, dataStr);
+          }
+        }
+      }
+    }
+
+    if (buffer.trim().startsWith('data: ')) {
+      try {
+        const parsed = JSON.parse(buffer.replace(/^data:\s*/, '').trim());
+        if (parsed.type === 'content') state.text += parsed.content;
+      } catch (e) {}
+    }
+    onUpdate({ ...state, isGenerating: false });
+    return state;
+  } catch (err) {
+    console.error('[VAIT] Stream failed, using fallback:', err);
+    const category = detectCategory(message);
+    const responses = MOCK_RESPONSES[category] || MOCK_RESPONSES['Academic'];
+    const selected = responses[Math.floor(Math.random() * responses.length)];
+    
+    let state = {
+      text: '',
+      heading: selected.heading,
+      bullets: selected.bullets,
+      sources: MOCK_SOURCES[category] || MOCK_SOURCES['Academic'],
+      confidence: pickConfidence(),
+      category,
+      department: department || 'General',
+      academicYear: academicYear || '2025-26',
+      timestamp: new Date().toISOString(),
+      isGenerating: true
+    };
+
+    const mockText = selected.body;
+    for (let i = 0; i < mockText.length; i += 5) {
+      state.text += mockText.substr(i, 5);
+      onUpdate({ ...state, isGenerating: true });
+      await new Promise(r => setTimeout(r, 20));
+    }
+    onUpdate({ ...state, isGenerating: false });
+    return state;
+  }
+}
+
 export { detectCategory, CATEGORIES };

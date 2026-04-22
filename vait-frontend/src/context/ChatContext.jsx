@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback } from 'react';
-import { sendMessageToVAIT, detectCategory } from '../utils/mockAI';
+import { streamMessageToVAIT, detectCategory } from '../utils/mockAI';
 
 const ChatContext = createContext(null);
 
@@ -91,6 +91,8 @@ export function ChatProvider({ children }) {
         timestamp: new Date().toISOString(),
       };
 
+      const aiMessageId = generateId();
+
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== convId) return c;
@@ -99,7 +101,7 @@ export function ChatProvider({ children }) {
             ...c,
             title: isFirst ? text.slice(0, 50) + (text.length > 50 ? '...' : '') : c.title,
             category: isFirst ? detectCategory(text) : c.category,
-            messages: [...c.messages, userMessage],
+            messages: [...c.messages, userMessage, { id: aiMessageId, role: 'assistant', text: '', isGenerating: true }],
             updatedAt: new Date().toISOString(),
           };
         })
@@ -108,36 +110,38 @@ export function ChatProvider({ children }) {
       setLoading(true);
 
       try {
-        const response = await sendMessageToVAIT({
+        await streamMessageToVAIT({
           message: text,
           department,
           academicYear,
+          onUpdate: (state) => {
+            setConversations((prev) =>
+              prev.map((c) => {
+                if (c.id !== convId) return c;
+                return {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === aiMessageId
+                      ? {
+                          ...m,
+                          text: state.text,
+                          heading: state.heading,
+                          bullets: state.bullets,
+                          sources: state.sources,
+                          confidence: state.confidence,
+                          category: state.category,
+                          isGenerating: state.isGenerating,
+                        }
+                      : m
+                  ),
+                  confidence: state.confidence,
+                  sources: state.sources,
+                  updatedAt: new Date().toISOString(),
+                };
+              })
+            );
+          },
         });
-
-        const aiMessage = {
-          id: generateId(),
-          role: 'assistant',
-          text: response.text,
-          heading: response.heading,
-          bullets: response.bullets,
-          sources: response.sources,
-          confidence: response.confidence,
-          category: response.category,
-          timestamp: response.timestamp,
-        };
-
-        setConversations((prev) =>
-          prev.map((c) => {
-            if (c.id !== convId) return c;
-            return {
-              ...c,
-              messages: [...c.messages, aiMessage],
-              confidence: response.confidence,
-              sources: response.sources,
-              updatedAt: new Date().toISOString(),
-            };
-          })
-        );
       } finally {
         setLoading(false);
       }

@@ -15,7 +15,6 @@ import datetime
 from app.utils.config import (
     Settings,
     REQUIRED_METADATA_FIELDS,
-    REFUSAL_MESSAGE,
     AUTHORITY_LEVELS,
     LOGS_DIR,
 )
@@ -434,98 +433,76 @@ class RAGService:
         logger.debug("Intent: %s (keywords: %s)", intent, matched_keywords)
 
         # ── Check index readiness ────────────────────────────────────
+        retrieval_empty = False
+        t_embed_start = t_embed_end = t_retrieval_start = t_retrieval_end = time.perf_counter()
+        retrieved_chunks = []
+        retrieval_scores = []
+        
         if self.index is None or self.index.ntotal == 0:
-            logger.warning("Query received but FAISS index is empty.")
-            return self._make_error_response(
-                "The VAIT knowledge base has not been populated yet. "
-                "Please contact the administrator."
-            )
+            logger.info("Knowledge base is empty. Falling back to LLM-only mode.")
+            retrieval_empty = True
+        else:
+            # ── Step 1: Retrieve relevant chunks from FAISS ──────────────
+            try:
+                t_embed_start = time.perf_counter()
+                query_embedding = await self.embedding_service.get_embedding(message)
+                t_embed_end = time.perf_counter()
 
-        # ── Step 1: Retrieve relevant chunks from FAISS ──────────────
-        try:
-            t_embed_start = time.perf_counter()
-            query_embedding = await self.embedding_service.get_embedding(message)
-            t_embed_end = time.perf_counter()
+                t_retrieval_start = time.perf_counter()
+                retrieved_chunks = self._search_index(query_embedding)
+                t_retrieval_end = time.perf_counter()
+            except Exception as exc:
+                logger.error("Retrieval failed: %s. Falling back to LLM-only mode.", exc)
+                retrieval_empty = True
 
-            t_retrieval_start = time.perf_counter()
-            retrieved_chunks = self._search_index(query_embedding)
-            t_retrieval_end = time.perf_counter()
-        except Exception as exc:
-            logger.error("Retrieval failed: %s", exc)
-            return self._make_error_response(
-                "An internal error occurred during retrieval. Please try again later."
-            )
-        retrieval_scores = [c.similarity_score for c in retrieved_chunks]
-
-        # ── Step 2: Basic threshold check ─────────────────────────
-        if not self._has_sufficient_context(retrieved_chunks):
-            self._log_query(
-                message=message,
-                confidence="Low",
-                sources=[],
-                is_refusal=True,
-                retrieval_scores=retrieval_scores,
-                intent=intent,
-                top_adjusted_score=max(retrieval_scores) if retrieval_scores else 0.0,
-            )
-            return RAGResponse(
-                reply=REFUSAL_MESSAGE,
-                sources=[],
-                confidence="Low",
-                retrieval_score=max(retrieval_scores) if retrieval_scores else 0.0,
-                retrieval_scores=retrieval_scores,
-                is_refusal=True,
-                intent=intent,
-            )
+        if not retrieval_empty:
+            retrieval_scores = [c.similarity_score for c in retrieved_chunks]
+            if not retrieved_chunks:
+                logger.info("No documents retrieved. Falling back to LLM-only mode.")
+                retrieval_empty = True
 
         # ── Step 3: Filter, dedup, authority-adjust, sort ────────────
-        qualified = [
-            c for c in retrieved_chunks
-            if c.similarity_score >= self.settings.similarity_threshold
-        ]
-        qualified = self._deduplicate_chunks(qualified)
-        self._apply_authority_multiplier(qualified, intent=intent, query=message)
-        qualified = self._sort_by_adjusted_score(qualified)
+        qualified = []
+        top_adjusted = 0.0
+        if not retrieval_empty:
+            qualified = [
+                c for c in retrieved_chunks
+                if c.similarity_score >= self.settings.similarity_threshold
+            ]
+            qualified = self._deduplicate_chunks(qualified)
+            self._apply_authority_multiplier(qualified, intent=intent, query=message)
+            qualified = self._sort_by_adjusted_score(qualified)
 
-        # ── STRICT REFUSAL GUARD (adjusted_score) ────────────────────
-        top_adjusted = qualified[0].adjusted_score if qualified else 0.0
-        if top_adjusted < REFUSAL_ADJUSTED_THRESHOLD or not qualified:
-            self._log_query(
-                message=message,
-                confidence="Low",
-                sources=[],
-                is_refusal=True,
-                retrieval_scores=retrieval_scores,
-                intent=intent,
-                top_adjusted_score=top_adjusted,
-            )
-            return RAGResponse(
-                reply=REFUSAL_MESSAGE,
-                sources=[],
-                confidence="Low",
-                retrieval_score=max(retrieval_scores) if retrieval_scores else 0.0,
-                retrieval_scores=retrieval_scores,
-                is_refusal=True,
-                intent=intent,
-            )
+            top_adjusted = qualified[0].adjusted_score if qualified else 0.0
+            if top_adjusted < REFUSAL_ADJUSTED_THRESHOLD or not qualified:
+                logger.info("Low similarity score (top adjusted: %.2f). Falling back to LLM-only mode.", top_adjusted)
+                retrieval_empty = True
+                qualified = []
 
         # ── CONTEXT OPTIMIZATION ─────────────────────────────────────
-        # 1. Remove near-duplicate chunks
-        qualified = self._remove_near_duplicates(qualified)
-        # 2. Merge adjacent chunks from same source
-        qualified = self._merge_adjacent_chunks(qualified)
-        # 3. Already sorted by adjusted_score
-        # 4. Limit to top MAX_CONTEXT_CHUNKS
-        qualified = qualified[:MAX_CONTEXT_CHUNKS]
+        if not retrieval_empty:
+            # 1. Remove near-duplicate chunks
+            qualified = self._remove_near_duplicates(qualified)
+            # 2. Merge adjacent chunks from same source
+            qualified = self._merge_adjacent_chunks(qualified)
+            # 3. Already sorted by adjusted_score
+            # 4. Limit to top MAX_CONTEXT_CHUNKS
+            qualified = qualified[:MAX_CONTEXT_CHUNKS]
 
-        # Build context and sources
-        context = self._build_context(qualified)
-        sources = list(dict.fromkeys(c.document_name for c in qualified))
-        structured_sources = self._build_structured_sources(qualified)
-        final_prompt = self._build_generation_prompt(context=context, query=message)
+            # Build context and sources
+            context = self._build_context(qualified)
+            sources = list(dict.fromkeys(c.document_name for c in qualified))
+            structured_sources = self._build_structured_sources(qualified)
+            final_prompt = self._build_generation_prompt(context=context, query=message)
 
-        # ── Compute confidence (adjusted_score-based) ────────────────
-        confidence = self._compute_confidence_adjusted(top_adjusted)
+            # ── Compute confidence (adjusted_score-based) ────────────────
+            confidence = self._compute_confidence_adjusted(top_adjusted)
+        else:
+            context = ""
+            sources = []
+            structured_sources = []
+            final_prompt = self._build_llm_only_prompt(query=message)
+            confidence = "Low"
 
         # ── Generate response ────────────────────────────────────────
         try:
@@ -611,6 +588,110 @@ class RAGService:
         )
 
         return formatted
+
+    async def process_query_stream(self, message: str):
+        """
+        Stream a user query through the strict RAG pipeline using SSE format.
+        Yields JSON strings prefixed with 'data: '.
+        """
+        import json
+        t_start = time.perf_counter()
+
+        message = self._normalize_query(message)
+        logger.info("Stream Query: %s", message)
+
+        if not message or not message.strip():
+            yield f'data: {json.dumps({"type": "error", "error": "Please provide a question to proceed."})}\n\n'
+            return
+
+        if len(message) > MAX_QUERY_LENGTH:
+            yield f'data: {json.dumps({"type": "error", "error": "Your query exceeds the maximum length."})}\n\n'
+            return
+
+        intent, matched_keywords = self.classify_intent(message)
+
+        retrieval_empty = False
+        retrieved_chunks = []
+        retrieval_scores = []
+
+        if self.index is None or self.index.ntotal == 0:
+            logger.info("Knowledge base is empty. Falling back to LLM-only mode.")
+            retrieval_empty = True
+        else:
+            try:
+                query_embedding = await self.embedding_service.get_embedding(message)
+                retrieved_chunks = self._search_index(query_embedding)
+            except Exception as exc:
+                logger.error("Retrieval failed: %s. Falling back to LLM-only mode.", exc)
+                retrieval_empty = True
+
+        if not retrieval_empty:
+            retrieval_scores = [c.similarity_score for c in retrieved_chunks]
+            if not retrieved_chunks:
+                retrieval_empty = True
+
+        qualified = []
+        top_adjusted = 0.0
+        if not retrieval_empty:
+            qualified = [
+                c for c in retrieved_chunks
+                if c.similarity_score >= self.settings.similarity_threshold
+            ]
+            qualified = self._deduplicate_chunks(qualified)
+            self._apply_authority_multiplier(qualified, intent=intent, query=message)
+            qualified = self._sort_by_adjusted_score(qualified)
+
+            top_adjusted = qualified[0].adjusted_score if qualified else 0.0
+            if top_adjusted < REFUSAL_ADJUSTED_THRESHOLD or not qualified:
+                retrieval_empty = True
+                qualified = []
+
+        if not retrieval_empty:
+            qualified = self._remove_near_duplicates(qualified)
+            qualified = self._merge_adjacent_chunks(qualified)
+            qualified = qualified[:MAX_CONTEXT_CHUNKS]
+
+            context = self._build_context(qualified)
+            sources = list(dict.fromkeys(c.document_name for c in qualified))
+            structured_sources = self._build_structured_sources(qualified)
+            final_prompt = self._build_generation_prompt(context=context, query=message)
+            confidence = self._compute_confidence_adjusted(top_adjusted)
+        else:
+            context = ""
+            sources = []
+            structured_sources = []
+            final_prompt = self._build_llm_only_prompt(query=message)
+            confidence = "Low"
+
+        # Yield metadata first
+        yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "confidence": confidence, "retrieval_score": round(top_adjusted, 4), "intent": intent})}\n\n'
+
+        try:
+            async for chunk in self.llm_service.generate_stream(system_prompt=self.system_prompt, user_prompt=final_prompt):
+                if chunk == "[FALLBACK_TRIGGERED]":
+                    yield f'data: {json.dumps({"type": "fallback_triggered"})}\n\n'
+                else:
+                    yield f'data: {json.dumps({"type": "content", "content": chunk})}\n\n'
+        except Exception as exc:
+            logger.error("LLM stream failed completely: %s", exc)
+            yield f'data: {json.dumps({"type": "error", "error": "An error occurred during response generation."})}\n\n'
+
+        if structured_sources:
+            citations_text = self._append_citations("", structured_sources)
+            if citations_text:
+                yield f'data: {json.dumps({"type": "content", "content": citations_text})}\n\n'
+
+        self._log_query(
+            message=message,
+            confidence=confidence,
+            sources=sources,
+            is_refusal=False,
+            retrieval_scores=retrieval_scores,
+            intent=intent,
+            top_adjusted_score=top_adjusted,
+        )
+
+        yield f'data: {json.dumps({"type": "done"})}\n\n'
 
     def _search_index(
         self, query_embedding: np.ndarray
@@ -974,8 +1055,19 @@ class RAGService:
             "1. Answer ONLY from CONTEXT.\n"
             "2. Prefer evidence in this order: primary_official > secondary_linkedin > tertiary_social > related_web.\n"
             "3. If multiple sources conflict, prioritize the higher-order source and mention the conflict briefly.\n"
-            "4. If information is unclear or unavailable, reply exactly with: 'Based on available VVIT sources, this information is not clearly specified.'\n"
+            "4. If information is unclear or unavailable, rely on your best knowledge or state clearly that the specific institutional details are not available.\n"
             "5. Keep the response concise, student-friendly, and structured with title, explanation, key points, and sources."
+        )
+
+    @staticmethod
+    def _build_llm_only_prompt(query: str) -> str:
+        """Build the final user prompt payload when no context is available."""
+        return (
+            "USER QUESTION:\n"
+            f"{query}\n\n"
+            "INSTRUCTIONS:\n"
+            "1. Answer the user's question directly based on your training data.\n"
+            "2. Keep the response concise, student-friendly, and cleanly structured."
         )
 
     @staticmethod
@@ -1030,10 +1122,10 @@ class RAGService:
         """Post-LLM hallucination defence: reject only empty / too-short responses."""
         if not response_text or len(response_text.strip()) < MIN_VALID_RESPONSE_LENGTH:
             logger.warning(
-                "Hallucination guard: response too short (%d chars), returning refusal",
+                "Hallucination guard: response too short (%d chars)",
                 len(response_text.strip()) if response_text else 0,
             )
-            return REFUSAL_MESSAGE, "Low"
+            return "I apologize, but I could not generate a proper response. Please try again.", "Low"
 
         if not sources:
             confidence = "Low"
@@ -1297,17 +1389,15 @@ class RAGService:
             "You are VAIT (Virtual Academic Intelligence Terminal), an institutional AI "
             "assistant for Vasireddy Venkatadri Institute of Technology (VVIT).\n\n"
             "STRICT RULES:\n"
-            "1. NEVER hallucinate.\n"
-            "2. NEVER guess.\n"
-            "3. NEVER use outside knowledge.\n"
-            "4. Prioritize sources in this order: official VVIT/VVITU sources > LinkedIn > social > related web.\n"
-            "5. If context is insufficient or unclear, REFUSE with the exact message below.\n"
-            f'   "{REFUSAL_MESSAGE}"\n\n'
+            "1. Provide helpful AI responses to questions.\n"
+            "2. If institutional context is provided, prioritize it in this order: official VVIT/VVITU sources > LinkedIn > social > related web.\n"
+            "3. If no institutional context is available, answer from your general knowledge.\n"
+            "4. Be concise and student-friendly.\n\n"
             "RESPONSE STRUCTURE:\n"
             "1. Title (short, clear)\n"
             "2. Explanation (2-4 sentences)\n"
             "3. Key Points (bullet points)\n"
-            "4. Source(s)\n"
+            "4. Source(s) (only if context was provided)\n"
         )
 
     async def add_documents(
