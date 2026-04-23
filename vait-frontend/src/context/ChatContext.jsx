@@ -107,6 +107,9 @@ export function ChatProvider({ children }) {
         })
       );
 
+      const existingConv = conversations.find((c) => c.id === convId);
+      const history = existingConv ? [...existingConv.messages] : [];
+
       setLoading(true);
 
       try {
@@ -114,6 +117,7 @@ export function ChatProvider({ children }) {
           message: text,
           department,
           academicYear,
+          history,
           onUpdate: (state) => {
             setConversations((prev) =>
               prev.map((c) => {

@@ -383,7 +383,7 @@ class RAGService:
             return 0.01
         return 0.0
 
-    async def process_query(self, message: str) -> RAGResponse:
+    async def process_query(self, message: str, history: list = None) -> RAGResponse:
         """
         Process a user query through the strict RAG pipeline.
 
@@ -510,6 +510,7 @@ class RAGService:
             response_text = self.llm_service.generate(
                 system_prompt=self.system_prompt,
                 user_prompt=final_prompt,
+                history=history,
             )
             t_gen_end = time.perf_counter()
         except MemoryError:
@@ -589,7 +590,7 @@ class RAGService:
 
         return formatted
 
-    async def process_query_stream(self, message: str):
+    async def process_query_stream(self, message: str, history: list = None):
         """
         Stream a user query through the strict RAG pipeline using SSE format.
         Yields JSON strings prefixed with 'data: '.
@@ -667,7 +668,11 @@ class RAGService:
         yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "confidence": confidence, "retrieval_score": round(top_adjusted, 4), "intent": intent})}\n\n'
 
         try:
-            async for chunk in self.llm_service.generate_stream(system_prompt=self.system_prompt, user_prompt=final_prompt):
+            async for chunk in self.llm_service.generate_stream(
+                system_prompt=self.system_prompt,
+                user_prompt=final_prompt,
+                history=history
+            ):
                 if chunk == "[FALLBACK_TRIGGERED]":
                     yield f'data: {json.dumps({"type": "fallback_triggered"})}\n\n'
                 else:

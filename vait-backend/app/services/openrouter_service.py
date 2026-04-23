@@ -19,7 +19,7 @@ class OpenRouterService:
         self.endpoint = settings.openrouter_chat_completions_url
         self.timeout_seconds = settings.openrouter_timeout_seconds
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, messages: list) -> str:
         """Generate a completion using OpenRouter chat completions."""
         if not self.settings.openrouter_api_key:
             raise RuntimeError("OPENROUTER_API_KEY is not configured")
@@ -30,7 +30,7 @@ class OpenRouterService:
         }
         payload = {
             "model": self.settings.openrouter_model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
         }
 
         try:
@@ -65,7 +65,7 @@ class OpenRouterService:
         logger.info("OpenRouter fallback generation succeeded (%d chars)", len(content))
         return content
 
-    async def generate_stream(self, prompt: str):
+    async def generate_stream(self, messages: list):
         """Generate a streaming completion using OpenRouter chat completions."""
         if not self.settings.openrouter_api_key:
             raise RuntimeError("OPENROUTER_API_KEY is not configured")
@@ -77,7 +77,7 @@ class OpenRouterService:
         }
         payload = {
             "model": self.settings.openrouter_model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": True,
         }
 

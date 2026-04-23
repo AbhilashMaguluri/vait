@@ -19,7 +19,7 @@ class GroqService:
         self.endpoint = settings.groq_chat_completions_url
         self.timeout_seconds = settings.groq_timeout_seconds
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, messages: list) -> str:
         """Generate a completion using Groq chat completions."""
         if not self.settings.groq_api_key:
             raise RuntimeError("GROQ_API_KEY is not configured")
@@ -30,7 +30,7 @@ class GroqService:
         }
         payload = {
             "model": self.settings.groq_model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
         }
 
         try:
@@ -64,7 +64,7 @@ class GroqService:
         logger.info("Groq response generation succeeded (%d chars)", len(content))
         return content
 
-    async def generate_stream(self, prompt: str):
+    async def generate_stream(self, messages: list):
         """Generate a streaming completion using Groq chat completions."""
         if not self.settings.groq_api_key:
             raise RuntimeError("GROQ_API_KEY is not configured")
@@ -75,7 +75,7 @@ class GroqService:
         }
         payload = {
             "model": self.settings.groq_model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": True,
         }
 

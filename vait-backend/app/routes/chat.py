@@ -14,6 +14,11 @@ router = APIRouter(tags=["chat"])
 
 # ── Request / Response models ──
 
+class MessageItem(BaseModel):
+    """A single message in the conversation history."""
+    role: str = Field(..., description="Role of the sender: 'user' or 'assistant'")
+    content: str = Field(..., description="Content of the message")
+
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
     message: str = Field(
@@ -24,6 +29,10 @@ class ChatRequest(BaseModel):
     )
     department: Optional[str] = Field(None)
     academic_year: Optional[str] = Field(None)
+    history: Optional[List[MessageItem]] = Field(
+        default_factory=list,
+        description="Previous conversation history"
+    )
 
 
 class SourceItem(BaseModel):
@@ -124,6 +133,7 @@ async def chat(
             message=request.message,
             department=request.department,
             academic_year=request.academic_year,
+            history=request.history,
         )
         logger.info("Chat response confidence: %s, score: %.3f", response.confidence, response.retrieval_score)
         return ChatResponse(
@@ -159,6 +169,7 @@ async def chat_stream(
             message=request.message,
             department=request.department,
             academic_year=request.academic_year,
+            history=request.history,
         ),
         media_type="text/event-stream"
     )
@@ -176,6 +187,7 @@ async def chat_detailed(
             message=request.message,
             department=request.department,
             academic_year=request.academic_year,
+            history=request.history,
         )
         return ChatDetailedResponse(
             reply=response.reply,

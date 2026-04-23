@@ -20,26 +20,39 @@ class LLMService:
         self.groq = GroqService(settings)
         self.openrouter = OpenRouterService(settings)
 
-    def generate(self, system_prompt: str, user_prompt: str) -> str:
+    def generate(self, system_prompt: str, user_prompt: str, history: list = None) -> str:
         """
         Generate a response using Groq as primary and OpenRouter as fallback.
 
         Args:
             system_prompt: System-level policy and guardrails.
             user_prompt: Context + user question payload.
+            history: Optional conversation history to include.
 
         Returns:
             Model response text, or a safe availability message.
         """
         logger.info("Starting LLM generation with Groq model: %s", self.settings.groq_model)
-        full_prompt = f"{system_prompt}\n\n{user_prompt}".strip()
+        
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        if history:
+            limit = 10
+            for msg in history[-limit:]:
+                role = getattr(msg, "role", None) or (msg.get("role") if isinstance(msg, dict) else msg.role)
+                content = getattr(msg, "content", None) or (msg.get("content") if isinstance(msg, dict) else msg.content)
+                if role and content:
+                    norm_role = "assistant" if role == "assistant" else "user"
+                    messages.append({"role": norm_role, "content": content})
+                    
+        messages.append({"role": "user", "content": user_prompt})
 
         try:
-            return self.groq.generate(full_prompt)
+            return self.groq.generate(messages)
         except Exception as exc:
             logger.error("Groq generation failed: %s", exc, exc_info=True)
             logger.warning("Fallback triggered: switching to OpenRouter after Groq failure")
-            return self._generate_with_openrouter(full_prompt)
+            return self._generate_with_openrouter(messages)
 
     async def generate_response(
         self,
@@ -47,6 +60,7 @@ class LLMService:
         context: str,
         system_prompt: str,
         sources: List[str],
+        history: list = None,
     ) -> str:
         """Backward-compatible async wrapper around generate()."""
         contextual_prompt = self._build_contextual_prompt(
@@ -62,13 +76,14 @@ class LLMService:
         return self.generate(
             system_prompt=system_prompt,
             user_prompt=contextual_prompt,
+            history=history,
         )
 
-    def _generate_with_openrouter(self, prompt: str) -> str:
+    def _generate_with_openrouter(self, messages: list) -> str:
         """Generate with OpenRouter fallback and return a safe message on failure."""
 
         try:
-            return self.openrouter.generate(prompt)
+            return self.openrouter.generate(messages)
         except Exception as exc:
             logger.error("OpenRouter fallback failed: %s", exc, exc_info=True)
             return SAFE_UNAVAILABLE_MESSAGE
@@ -99,13 +114,25 @@ class LLMService:
             "Official VVIT/VVITU websites, LinkedIn sources, other social sources, then related web sources.\n"
         )
 
-    async def generate_stream(self, system_prompt: str, user_prompt: str):
-        full_prompt = f"{system_prompt}\n\n{user_prompt}".strip()
+    async def generate_stream(self, system_prompt: str, user_prompt: str, history: list = None):
         logger.info("Starting streaming LLM generation with Groq model: %s", self.settings.groq_model)
         
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        if history:
+            limit = 10
+            for msg in history[-limit:]:
+                role = getattr(msg, "role", None) or (msg.get("role") if isinstance(msg, dict) else msg.role)
+                content = getattr(msg, "content", None) or (msg.get("content") if isinstance(msg, dict) else msg.content)
+                if role and content:
+                    norm_role = "assistant" if role == "assistant" else "user"
+                    messages.append({"role": norm_role, "content": content})
+                    
+        messages.append({"role": "user", "content": user_prompt})
+
         fallback_needed = False
         try:
-            async for chunk in self.groq.generate_stream(full_prompt):
+            async for chunk in self.groq.generate_stream(messages):
                 yield chunk
             logger.info("Groq stream completed successfully")
         except Exception as exc:
@@ -116,7 +143,7 @@ class LLMService:
             logger.warning("Fallback triggered: switching to OpenRouter after Groq streaming failure")
             yield "[FALLBACK_TRIGGERED]"
             try:
-                async for chunk in self.openrouter.generate_stream(full_prompt):
+                async for chunk in self.openrouter.generate_stream(messages):
                     yield chunk
                 logger.info("OpenRouter stream completed successfully")
             except Exception as exc:

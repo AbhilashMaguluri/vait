@@ -36,6 +36,7 @@ class ChatController:
         message: str,
         department: Optional[str] = None,
         academic_year: Optional[str] = None,
+        history: Optional[List[Dict]] = None,
     ) -> ChatResult:
         """Process a user message through the RAG pipeline."""
         rag_service = _get_rag_service()
@@ -53,7 +54,7 @@ class ChatController:
                 is_refusal=True,
             )
 
-        response: RAGResponse = await rag_service.process_query(message)
+        response: RAGResponse = await rag_service.process_query(message, history=history)
 
         return ChatResult(
             reply=response.reply,
@@ -71,15 +72,16 @@ class ChatController:
         message: str,
         department: Optional[str] = None,
         academic_year: Optional[str] = None,
+        history: Optional[List[Dict]] = None,
     ):
-        """Process a user message through the RAG pipeline with streaming."""
+        """Process a user message through the RAG pipeline with streaming and memory."""
         rag_service = _get_rag_service()
         if rag_service is None:
             import json
             yield f'data: {json.dumps({"type": "error", "error": "The VAIT system is currently initializing. Please try again in a moment."})}\n\n'
             return
 
-        async for chunk in rag_service.process_query_stream(message):
+        async for chunk in rag_service.process_query_stream(message, history=history):
             yield chunk
 
     async def debug_retrieve(self, query: str) -> Dict:
