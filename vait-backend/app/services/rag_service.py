@@ -681,11 +681,6 @@ class RAGService:
             logger.error("LLM stream failed completely: %s", exc)
             yield f'data: {json.dumps({"type": "error", "error": "An error occurred during response generation."})}\n\n'
 
-        if structured_sources:
-            citations_text = self._append_citations("", structured_sources)
-            if citations_text:
-                yield f'data: {json.dumps({"type": "content", "content": citations_text})}\n\n'
-
         self._log_query(
             message=message,
             confidence=confidence,

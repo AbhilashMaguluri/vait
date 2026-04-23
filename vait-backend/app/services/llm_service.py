@@ -109,7 +109,7 @@ class LLMService:
             "INSTRUCTIONS:\n"
             "1. Answer the user's question using the RETRIEVED INSTITUTIONAL RECORDS above whenever applicable.\n"
             "2. Use this output structure exactly: Title, Explanation (2-4 sentences), "
-            "Key Points (bullet points), Source(s) (if used).\n"
+            "Key Points (bullet points).\n"
             "3. If sources conflict, prefer higher-authority sources in this order: "
             "Official VVIT/VVITU websites, LinkedIn sources, other social sources, then related web sources.\n"
         )
