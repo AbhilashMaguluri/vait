@@ -1,25 +1,28 @@
+import { LogOut } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { useChat } from '../context/ChatContext';
 import './TopBar.css';
 
-const DEPARTMENTS = ['CSE', 'AI', 'ECE', 'IT', 'Mechanical', 'Civil'];
-const YEARS = ['2023-24', '2024-25', '2025-26'];
-
 export default function TopBar() {
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const {
-    department,
-    setDepartment,
-    academicYear,
-    setAcademicYear,
     clearChat,
     exportConversation,
     activeConversation,
   } = useChat();
 
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
+
   return (
     <header className="topbar">
       <div className="topbar-left">
         <h1 className="topbar-title">VAIT</h1>
-        <span className="topbar-subtitle">VVIT's Official  Intelligence Assistant</span>
+        <span className="topbar-subtitle">VVIT's Official Intelligence Assistant</span>
       </div>
 
       <div className="topbar-center">
@@ -27,34 +30,11 @@ export default function TopBar() {
       </div>
 
       <div className="topbar-right">
-        <div className="topbar-select-group">
-          <label className="topbar-label" htmlFor="dept-select">Dept</label>
-          <select
-            id="dept-select"
-            className="topbar-select"
-            value={department}
-            onChange={(e) => setDepartment(e.target.value)}
-          >
-            {DEPARTMENTS.map((d) => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="topbar-select-group">
-          <label className="topbar-label" htmlFor="year-select">Year</label>
-          <select
-            id="year-select"
-            className="topbar-select"
-            value={academicYear}
-            onChange={(e) => setAcademicYear(e.target.value)}
-          >
-            {YEARS.map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-        </div>
-
+        {user && (
+          <span className="topbar-user" title={user.email}>
+            {user.full_name || user.username}
+          </span>
+        )}
         {activeConversation && (
           <>
             <button className="topbar-btn" onClick={exportConversation} title="Export conversation">
@@ -65,6 +45,9 @@ export default function TopBar() {
             </button>
           </>
         )}
+        <button className="topbar-icon-btn" onClick={handleLogout} title="Logout" aria-label="Logout">
+          <LogOut size={15} />
+        </button>
       </div>
     </header>
   );

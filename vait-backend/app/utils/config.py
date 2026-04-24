@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List
 
 from dotenv import load_dotenv
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("vait.config")
@@ -63,6 +63,16 @@ REFUSAL_MESSAGE = (
 )
 
 
+def mask_connection_uri(uri: str) -> str:
+    """Hide credentials in database URIs before writing them to logs."""
+
+    if "://" not in uri or "@" not in uri:
+        return uri
+    scheme, rest = uri.split("://", 1)
+    _, host_part = rest.split("@", 1)
+    return f"{scheme}://***:***@{host_part}"
+
+
 class Settings(BaseSettings):
     """Environment-backed application settings."""
 
@@ -81,6 +91,10 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/vait"
 
     mongodb_uri: str = Field(default="mongodb://localhost:27017/vait", alias="MONGODB_URI")
+    mongodb_server_selection_timeout_ms: int = Field(
+        default=2000,
+        alias="MONGODB_SERVER_SELECTION_TIMEOUT_MS",
+    )
     jwt_secret: str = Field(default="change-me-in-production", alias="JWT_SECRET")
     jwt_expiry: str = Field(default="7d", alias="JWT_EXPIRY")
 
@@ -88,17 +102,28 @@ class Settings(BaseSettings):
     admin_email: str = Field(default="admin@vvit.net", alias="ADMIN_EMAIL")
     admin_password: str = Field(default="admin", alias="ADMIN_PASSWORD")
 
+    google_client_id: str = Field(default="", alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", alias="GOOGLE_CLIENT_SECRET")
+    google_redirect_uri: str = Field(
+        default="http://127.0.0.1:8000/api/vait/auth/google/callback",
+        alias="GOOGLE_REDIRECT_URI",
+    )
+    frontend_auth_redirect_url: str = Field(
+        default="http://localhost:5173/auth/callback",
+        alias="FRONTEND_AUTH_REDIRECT_URL",
+    )
+
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     nvidia_api_key: str = Field(default="", alias="NVIDIA_API_KEY")
 
-    embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
-    embedding_dimension: int = 768
+    embedding_model: str = "openai/text-embedding-3-small"
+    embedding_dimension: int = 1536
 
     openai_model: str = "gpt-4o-mini"
-    groq_model: str = "llama3-70b-8192"
-    openrouter_model: str = "mistralai/mistral-7b-instruct"
+    groq_model: str = "llama-3.3-70b-versatile"
+    openrouter_model: str = "meta-llama/llama-3.1-8b-instruct"
     nvidia_model: str = "meta/llama-3.1-70b-instruct"
     groq_chat_completions_url: str = "https://api.groq.com/openai/v1/chat/completions"
     openrouter_chat_completions_url: str = "https://openrouter.ai/api/v1/chat/completions"
@@ -109,7 +134,7 @@ class Settings(BaseSettings):
     embeddings_timeout_seconds: float = 20.0
 
     default_llm_provider: str = "groq"
-    default_llm_model: str = "llama3-70b-8192"
+    default_llm_model: str = "llama-3.3-70b-versatile"
     default_temperature: float = 0.3
     default_max_tokens: int = 800
 
@@ -132,6 +157,9 @@ class Settings(BaseSettings):
     crawl_depth_limit: int = 2
     crawl_max_pages: int = 200
     crawl_delay: float = 0.5
+    auto_ingest_official_sites_on_empty: bool = True
+    official_bootstrap_depth_limit: int = 1
+    official_bootstrap_max_pages: int = 24
 
     auto_reindex_on_startup: bool = False
     auto_watch_enabled: bool = False
@@ -149,6 +177,18 @@ class Settings(BaseSettings):
     logs_path: str = str(LOGS_DIR)
     system_prompt_path: str = str(PROMPTS_DIR / "vait_system_prompt.txt")
 
+    @field_validator("debug", mode="before")
+    @classmethod
+    def parse_debug_flag(cls, value):
+        """Accept common environment labels for the DEBUG setting."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "prod", "production", "false", "0", "no", "off"}:
+                return False
+            if normalized in {"debug", "dev", "development", "true", "1", "yes", "on"}:
+                return True
+        return value
+
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -158,7 +198,7 @@ def get_settings() -> Settings:
     logger.info("Configuration loaded successfully")
     logger.info("  .env file           : %s (loaded=%s)", _dotenv_path, _dotenv_loaded)
     logger.info("  Environment         : %s", settings.node_env)
-    logger.info("  MongoDB URI         : %s", settings.mongodb_uri)
+    logger.info("  MongoDB URI         : %s", mask_connection_uri(settings.mongodb_uri))
     logger.info("  JWT expiry          : %s", settings.jwt_expiry)
     logger.info("  Default admin email : %s", settings.admin_email)
     logger.info("  Groq model          : %s", settings.groq_model)

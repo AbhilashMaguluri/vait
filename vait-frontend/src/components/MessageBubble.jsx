@@ -35,7 +35,7 @@ export default function MessageBubble({ message }) {
 
         <p className="message-text">
           {message.text}
-          {!isUser && message.isGenerating && <span className="blinking-cursor">█</span>}
+          {!isUser && message.isGenerating && <span className="blinking-cursor">|</span>}
         </p>
 
         {!isUser && message.bullets && message.bullets.length > 0 && (

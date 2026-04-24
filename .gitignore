@@ -47,6 +47,7 @@ vait-backend/data/logs/
 
 # Vector store (large / generated)
 vait-backend/data/vector_store/
+vait-backend/vectorstore/
 
 # Uploads (user-generated)
 vait-backend/uploads/

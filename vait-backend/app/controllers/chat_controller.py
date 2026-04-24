@@ -54,7 +54,21 @@ class ChatController:
                 is_refusal=True,
             )
 
-        response: RAGResponse = await rag_service.process_query(message, history=history)
+        try:
+            response: RAGResponse = await rag_service.process_query(message, history=history)
+        except Exception as exc:
+            logger.error("RAG/LLM processing failed: %s", exc, exc_info=True)
+            return ChatResult(
+                reply=(
+                    "I apologize, but I couldn't generate a response at the moment. "
+                    "Please try again shortly."
+                ),
+                sources=[],
+                structured_sources=[],
+                confidence="Low",
+                retrieval_score=0.0,
+                is_refusal=True,
+            )
 
         return ChatResult(
             reply=response.reply,
@@ -75,14 +89,23 @@ class ChatController:
         history: Optional[List[Dict]] = None,
     ):
         """Process a user message through the RAG pipeline with streaming and memory."""
+        import json
+
         rag_service = _get_rag_service()
         if rag_service is None:
-            import json
             yield f'data: {json.dumps({"type": "error", "error": "The VAIT system is currently initializing. Please try again in a moment."})}\n\n'
             return
 
-        async for chunk in rag_service.process_query_stream(message, history=history):
-            yield chunk
+        try:
+            async for chunk in rag_service.process_query_stream(message, history=history):
+                yield chunk
+        except Exception as exc:
+            logger.error("Streaming RAG/LLM processing failed: %s", exc, exc_info=True)
+            error_payload = {
+                "type": "error",
+                "error": "I apologize, but I couldn't generate a response at the moment. Please try again shortly.",
+            }
+            yield "data: " + json.dumps(error_payload) + "\n\n"
 
     async def debug_retrieve(self, query: str) -> Dict:
         """

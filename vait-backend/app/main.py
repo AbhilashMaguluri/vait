@@ -7,10 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.utils.config import get_settings, ensure_directories, LOGS_DIR
+from app.db import close_mongo_connection, connect_to_mongo
+from app.routes.auth import router as auth_router
 from app.routes.chat import router as chat_router
 from app.routes.admin import router as admin_router
 from app.services.rag_service import RAGService
 from app.services.file_watcher import FileWatcher, IncrementalIngestor, WATCHDOG_AVAILABLE
+from app.services.user_service import ensure_default_admin
 
 
 # =============================================================================
@@ -65,6 +68,21 @@ async def lifespan(app: FastAPI):
 
     settings = get_settings()
 
+    try:
+        database = await connect_to_mongo(settings)
+        await ensure_default_admin(
+            database,
+            username=settings.admin_username,
+            email=settings.admin_email,
+            password=settings.admin_password,
+        )
+        logger.info("Authentication database initialized")
+    except Exception as exc:
+        logger.warning(
+            "MongoDB is unavailable; auth/admin routes will fail until it is available: %s",
+            exc,
+        )
+
     # Initialize RAG service on startup
     try:
         rag_service = RAGService(settings)
@@ -111,6 +129,7 @@ async def lifespan(app: FastAPI):
     # Cleanup on shutdown
     if file_watcher is not None:
         file_watcher.stop()
+    await close_mongo_connection()
     logger.info("VAIT Backend shutting down...")
 
 
@@ -139,6 +158,7 @@ def create_app() -> FastAPI:
     )
     
     # Register routers
+    app.include_router(auth_router, prefix=settings.api_prefix)
     app.include_router(chat_router, prefix=settings.api_prefix)
     app.include_router(admin_router, prefix=settings.api_prefix)
     

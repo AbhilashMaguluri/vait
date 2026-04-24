@@ -38,7 +38,14 @@ from app.services.settings_service import (
     save_api_key_settings,
     upsert_setting_value,
 )
-from app.services.user_service import get_user_by_id, serialize_user, validate_role
+from app.services.user_service import (
+    build_user_document,
+    get_user_by_id,
+    normalize_email,
+    normalize_username,
+    serialize_user,
+    validate_role,
+)
 from app.utils.config import get_settings
 
 router = APIRouter(prefix="/admin", tags=["platform"])
@@ -248,25 +255,23 @@ async def create_user(request: UserCreateRequest, current_user: dict = Depends(r
 
     database = get_database()
     role = validate_role(request.role)
-    username = request.username.strip().lower()
-    email = request.email.strip().lower()
+    username = normalize_username(request.username)
+    email = normalize_email(request.email)
+    if not username:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Username must contain letters or numbers.")
 
     if await database[USERS_COLLECTION].find_one({"$or": [{"username": username}, {"email": email}]}):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A user with that email or username already exists")
 
-    now = datetime.now(timezone.utc)
-    user = {
-        "username": username,
-        "email": email,
-        "password_hash": hash_password(request.password),
-        "role": role,
-        "full_name": request.full_name.strip() if request.full_name else "",
-        "must_change_password": True,
-        "session_version": 0,
-        "created_at": now,
-        "updated_at": now,
-        "last_login_at": None,
-    }
+    user = build_user_document(
+        username=username,
+        email=email,
+        password_hash=hash_password(request.password),
+        role=role,
+        full_name=request.full_name or "",
+        must_change_password=True,
+        now=datetime.now(timezone.utc),
+    )
     result = await database[USERS_COLLECTION].insert_one(user)
     user["_id"] = result.inserted_id
     await log_activity(database, current_user["_id"], "user.created", {"user_id": str(user["_id"]), "role": role})

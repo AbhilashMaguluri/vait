@@ -1,5 +1,7 @@
-import { createContext, useContext, useState, useCallback } from 'react';
-import { streamMessageToVAIT, detectCategory } from '../utils/mockAI';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { sendMessageToVAIT, detectCategory } from '../utils/mockAI';
+import { buildApiUrl } from '../utils/apiConfig';
+import { useAuth } from './AuthContext';
 
 const ChatContext = createContext(null);
 
@@ -37,7 +39,37 @@ function groupConversations(conversations) {
   return groups;
 }
 
+function authHeaders(token) {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function readJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeConversation(conv) {
+  return {
+    id: conv.id,
+    title: conv.title || 'New Conversation',
+    messages: (conv.messages || []).map((message) => ({
+      ...message,
+      text: message.text || '',
+      timestamp: message.timestamp || new Date().toISOString(),
+    })),
+    category: conv.category || 'Academic',
+    confidence: conv.confidence || null,
+    sources: conv.sources || [],
+    createdAt: conv.createdAt || new Date().toISOString(),
+    updatedAt: conv.updatedAt || new Date().toISOString(),
+  };
+}
+
 export function ChatProvider({ children }) {
+  const { token, isAuthenticated } = useAuth();
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -46,6 +78,43 @@ export function ChatProvider({ children }) {
   const [categoryFilter, setCategoryFilter] = useState('All');
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId) || null;
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadConversations() {
+      if (!isAuthenticated || !token) {
+        setConversations([]);
+        setActiveConversationId(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(buildApiUrl('/api/vait/chat/conversations'), {
+          headers: authHeaders(token),
+        });
+        const data = await readJson(response);
+        if (!response.ok) {
+          throw new Error(data?.detail || 'Could not load conversations.');
+        }
+        if (!alive) return;
+        const nextConversations = (data?.conversations || []).map(normalizeConversation);
+        setConversations(nextConversations);
+        setActiveConversationId((current) =>
+          current && nextConversations.some((conv) => conv.id === current)
+            ? current
+            : nextConversations[0]?.id || null
+        );
+      } catch (error) {
+        console.error('[VAIT][Debug] Failed to load conversations:', error);
+      }
+    }
+
+    loadConversations();
+    return () => {
+      alive = false;
+    };
+  }, [isAuthenticated, token]);
 
   const createConversation = useCallback(() => {
     const id = generateId();
@@ -92,6 +161,7 @@ export function ChatProvider({ children }) {
       };
 
       const aiMessageId = generateId();
+      const assistantTimestamp = new Date().toISOString();
 
       setConversations((prev) =>
         prev.map((c) => {
@@ -101,56 +171,93 @@ export function ChatProvider({ children }) {
             ...c,
             title: isFirst ? text.slice(0, 50) + (text.length > 50 ? '...' : '') : c.title,
             category: isFirst ? detectCategory(text) : c.category,
-            messages: [...c.messages, userMessage, { id: aiMessageId, role: 'assistant', text: '', isGenerating: true }],
+            messages: [
+              ...c.messages,
+              userMessage,
+              {
+                id: aiMessageId,
+                role: 'assistant',
+                text: '',
+                isGenerating: true,
+                timestamp: assistantTimestamp,
+              },
+            ],
             updatedAt: new Date().toISOString(),
           };
         })
       );
 
-      const existingConv = conversations.find((c) => c.id === convId);
-      const history = existingConv ? [...existingConv.messages] : [];
-
       setLoading(true);
 
       try {
-        await streamMessageToVAIT({
+        const currentConversation = conversations.find((c) => c.id === convId);
+        const state = await sendMessageToVAIT({
           message: text,
           department,
           academicYear,
-          history,
-          onUpdate: (state) => {
-            setConversations((prev) =>
-              prev.map((c) => {
-                if (c.id !== convId) return c;
-                return {
-                  ...c,
-                  messages: c.messages.map((m) =>
-                    m.id === aiMessageId
-                      ? {
-                          ...m,
-                          text: state.text,
-                          heading: state.heading,
-                          bullets: state.bullets,
-                          sources: state.sources,
-                          confidence: state.confidence,
-                          category: state.category,
-                          isGenerating: state.isGenerating,
-                        }
-                      : m
-                  ),
-                  confidence: state.confidence,
-                  sources: state.sources,
-                  updatedAt: new Date().toISOString(),
-                };
-              })
-            );
-          },
+          history: currentConversation?.messages || [],
+          conversationId: convId,
+          token,
         });
+
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId) return c;
+            return {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === aiMessageId
+                  ? {
+                      ...m,
+                      text: state.text,
+                      heading: state.heading,
+                      bullets: state.bullets,
+                      sources: state.sources,
+                      confidence: state.confidence,
+                      category: state.category,
+                      isGenerating: false,
+                      timestamp: state.timestamp || m.timestamp,
+                    }
+                  : m
+              ),
+              confidence: state.confidence,
+              sources: state.sources,
+              updatedAt: new Date().toISOString(),
+            };
+          })
+        );
+      } catch (error) {
+        const errorText = error?.message || 'Unable to process your request right now.';
+        console.error('[VAIT][Debug] Chat request failed:', errorText);
+
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId) return c;
+            return {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === aiMessageId
+                  ? {
+                      ...m,
+                      text: `Error: ${errorText}`,
+                      isGenerating: false,
+                      confidence: 'Low',
+                      sources: [],
+                      timestamp: m.timestamp || assistantTimestamp,
+                    }
+                  : m
+              ),
+              confidence: 'Low',
+              sources: [],
+              updatedAt: new Date().toISOString(),
+            };
+          })
+        );
       } finally {
         setLoading(false);
       }
     },
-    [activeConversationId, department, academicYear]
+    [academicYear, activeConversationId, conversations, department, token]
   );
 
   const deleteConversation = useCallback(
@@ -159,15 +266,28 @@ export function ChatProvider({ children }) {
       if (activeConversationId === id) {
         setActiveConversationId(null);
       }
+      if (token) {
+        fetch(buildApiUrl(`/api/vait/chat/conversations/${encodeURIComponent(id)}`), {
+          method: 'DELETE',
+          headers: authHeaders(token),
+        }).catch((error) => console.error('[VAIT][Debug] Failed to delete conversation:', error));
+      }
     },
-    [activeConversationId]
+    [activeConversationId, token]
   );
 
   const renameConversation = useCallback((id, newTitle) => {
     setConversations((prev) =>
       prev.map((c) => (c.id === id ? { ...c, title: newTitle } : c))
     );
-  }, []);
+    if (token) {
+      fetch(buildApiUrl(`/api/vait/chat/conversations/${encodeURIComponent(id)}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+        body: JSON.stringify({ title: newTitle }),
+      }).catch((error) => console.error('[VAIT][Debug] Failed to rename conversation:', error));
+    }
+  }, [token]);
 
   const clearChat = useCallback(() => {
     if (!activeConversationId) return;
@@ -176,7 +296,13 @@ export function ChatProvider({ children }) {
         c.id === activeConversationId ? { ...c, messages: [], updatedAt: new Date().toISOString() } : c
       )
     );
-  }, [activeConversationId]);
+    if (token) {
+      fetch(buildApiUrl(`/api/vait/chat/conversations/${encodeURIComponent(activeConversationId)}/clear`), {
+        method: 'POST',
+        headers: authHeaders(token),
+      }).catch((error) => console.error('[VAIT][Debug] Failed to clear conversation:', error));
+    }
+  }, [activeConversationId, token]);
 
   const exportConversation = useCallback(() => {
     if (!activeConversation) return;

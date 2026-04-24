@@ -12,6 +12,7 @@ export default function ChatInput() {
   const handleSend = () => {
     const trimmed = text.trim();
     if (!trimmed || loading || trimmed.length > MAX_CHARS) return;
+    console.log('[VAIT][Debug] User input:', trimmed);
     sendMessage(trimmed);
     setText('');
     inputRef.current?.focus();
@@ -61,7 +62,7 @@ export default function ChatInput() {
         <span className={`char-counter ${isOverLimit ? 'char-over' : ''}`}>
           {charCount}/{MAX_CHARS}
         </span>
-        {loading && <span className="typing-indicator">VAIT is processing...</span>}
+        {loading && <span className="typing-indicator">Thinking...</span>}
       </div>
     </div>
   );

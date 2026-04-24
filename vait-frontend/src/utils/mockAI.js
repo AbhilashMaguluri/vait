@@ -88,6 +88,18 @@ function pickConfidence() {
   return "Low";
 }
 
+function formatApiError(detail) {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => item?.msg || item?.message || "")
+      .filter(Boolean)
+      .join(" ");
+  }
+  return detail?.message || "";
+}
+
 /**
  * Send user message to the VAIT backend API.
  * Falls back to mock response only if the backend is unreachable.
@@ -97,37 +109,52 @@ export async function sendMessageToVAIT({
   department,
   academicYear,
   history,
+  conversationId,
+  token,
 }) {
-  console.log("[VAIT] Sending message:", message);
+  console.log("[VAIT][Debug] Sending message:", message);
   const endpoint = buildApiUrl("/api/vait/chat");
-  console.log("[VAIT] API base URL:", BASE_URL);
-  console.log("[VAIT] API endpoint:", endpoint);
-
   const cleanHistory = (history || [])
     .map((h) => ({
       role: h.role === "assistant" ? "assistant" : "user",
-      content: h.text || "",
+      content: h.text || h.content || "",
     }))
     .filter((h) => h.content);
+  const payload = {
+    message,
+    department: department || null,
+    academic_year: academicYear || null,
+    conversation_id: conversationId || undefined,
+    history: cleanHistory.length > 0 ? cleanHistory : undefined,
+  };
+
+  console.log("[VAIT][Debug] API base URL:", BASE_URL);
+  console.log("[VAIT][Debug] API endpoint:", endpoint);
+  console.log("[VAIT][Debug] API request payload:", { ...payload, history: cleanHistory.length });
 
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        department: department || null,
-        academic_year: academicYear || null,
-        history: cleanHistory.length > 0 ? cleanHistory : undefined,
-      }),
+      headers,
+      body: JSON.stringify(payload),
     });
 
-    if (!res.ok) {
-      throw new Error(`Backend returned ${res.status}`);
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
     }
 
-    const data = await res.json();
-    console.log("[VAIT] Backend response:", data);
+    if (!res.ok) {
+      const detail = formatApiError(data?.detail) || `Backend returned ${res.status}`;
+      throw new Error(detail);
+    }
+
+    console.log("[VAIT][Debug] API response:", data);
 
     const category = data.intent || detectCategory(message);
 
@@ -138,30 +165,12 @@ export async function sendMessageToVAIT({
       sources: data.sources || [],
       confidence: data.confidence || "Low",
       category,
-      department: department || "General",
-      academicYear: academicYear || "2025-26",
       timestamp: new Date().toISOString(),
+      conversationId: data.conversation_id || conversationId,
     };
   } catch (err) {
-    console.error("[VAIT] Backend call failed, using mock fallback:", err);
-
-    // ── Fallback to mock (development only) ─────────────────────
-    const category = detectCategory(message);
-    const responses = MOCK_RESPONSES[category] || MOCK_RESPONSES["Academic"];
-    const selected = responses[Math.floor(Math.random() * responses.length)];
-    const sources = MOCK_SOURCES[category] || MOCK_SOURCES["Academic"];
-
-    return {
-      text: selected.body,
-      heading: selected.heading,
-      bullets: selected.bullets,
-      sources,
-      confidence: pickConfidence(),
-      category,
-      department: department || "General",
-      academicYear: academicYear || "2025-26",
-      timestamp: new Date().toISOString(),
-    };
+    console.error("[VAIT][Debug] Backend call failed:", err);
+    throw err;
   }
 }
 
@@ -173,6 +182,8 @@ export async function streamMessageToVAIT({
   department,
   academicYear,
   history,
+  conversationId,
+  token,
   onUpdate,
 }) {
   console.log("[VAIT] Streaming message:", message);
@@ -186,13 +197,17 @@ export async function streamMessageToVAIT({
     .filter((h) => h.content);
 
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         message,
         department: department || null,
         academic_year: academicYear || null,
+        conversation_id: conversationId || undefined,
         history: cleanHistory.length > 0 ? cleanHistory : undefined,
       }),
     });

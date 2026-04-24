@@ -1,6 +1,9 @@
 import { Component } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, ProtectedRoute } from './context/AuthContext';
 import { ChatProvider } from './context/ChatContext';
+import Auth from './pages/Auth';
+import AuthCallback from './pages/AuthCallback';
 import Intro from './pages/Intro';
 import Chat from './pages/Chat';
 
@@ -66,13 +69,26 @@ class AppErrorBoundary extends Component {
 export default function App() {
   return (
     <AppErrorBoundary>
-      <ChatProvider>
-        <Routes>
-          <Route path="/" element={<Intro />} />
-          <Route path="/chat" element={<Chat />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </ChatProvider>
+      <AuthProvider>
+        <ChatProvider>
+          <Routes>
+            <Route path="/" element={<Navigate to="/login" replace />} />
+            <Route path="/login" element={<Auth mode="login" />} />
+            <Route path="/signup" element={<Auth mode="signup" />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/intro" element={<Intro />} />
+            <Route
+              path="/chat"
+              element={
+                <ProtectedRoute>
+                  <Chat />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </ChatProvider>
+      </AuthProvider>
     </AppErrorBoundary>
   );
 }

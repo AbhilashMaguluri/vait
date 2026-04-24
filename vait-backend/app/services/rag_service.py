@@ -1,6 +1,7 @@
 """VAIT RAG Service — Retrieval-Augmented Generation pipeline."""
 
 import hashlib
+import asyncio
 import json
 import logging
 import re
@@ -195,6 +196,7 @@ class RAGService:
         self._cache_hits: int = 0
         self._cache_misses: int = 0
         self._start_time: float = time.time()
+        self._official_bootstrap_attempted: bool = False
 
     async def initialize(self) -> None:
         """Initialize the RAG service and load existing index if available."""
@@ -439,6 +441,9 @@ class RAGService:
         retrieval_scores = []
         
         if self.index is None or self.index.ntotal == 0:
+            await self._bootstrap_official_sites_if_empty()
+
+        if self.index is None or self.index.ntotal == 0:
             logger.info("Knowledge base is empty. Falling back to LLM-only mode.")
             retrieval_empty = True
         else:
@@ -616,6 +621,9 @@ class RAGService:
         retrieval_scores = []
 
         if self.index is None or self.index.ntotal == 0:
+            await self._bootstrap_official_sites_if_empty()
+
+        if self.index is None or self.index.ntotal == 0:
             logger.info("Knowledge base is empty. Falling back to LLM-only mode.")
             retrieval_empty = True
         else:
@@ -692,6 +700,83 @@ class RAGService:
         )
 
         yield f'data: {json.dumps({"type": "done"})}\n\n'
+
+    async def _bootstrap_official_sites_if_empty(self) -> bool:
+        """
+        Populate an empty knowledge base from configured official college sites.
+
+        This is intentionally bounded and domain-restricted. It runs at most once
+        per process and persists the resulting FAISS index for later requests.
+        """
+        if self._official_bootstrap_attempted:
+            return False
+        if not self.settings.auto_ingest_official_sites_on_empty:
+            return False
+        if self.index is not None and self.index.ntotal > 0:
+            return False
+        if not self.settings.crawl_seed_urls:
+            logger.warning("Official-site bootstrap skipped: no crawl_seed_urls configured")
+            return False
+        if not self.settings.openrouter_api_key:
+            logger.warning("Official-site bootstrap skipped: OPENROUTER_API_KEY is required for embeddings")
+            return False
+
+        self._official_bootstrap_attempted = True
+        logger.info(
+            "Knowledge base empty; bootstrapping from official sites: %s",
+            self.settings.crawl_seed_urls,
+        )
+
+        try:
+            from app.services.website_crawler import WebsiteCrawler
+
+            def crawl_pages():
+                crawler = WebsiteCrawler(
+                    allowed_domains=self.settings.allowed_domains,
+                    depth_limit=self.settings.official_bootstrap_depth_limit,
+                    max_pages=self.settings.official_bootstrap_max_pages,
+                    delay=self.settings.crawl_delay,
+                )
+                return crawler.crawl_as_dicts(self.settings.crawl_seed_urls)
+
+            pages = await asyncio.to_thread(crawl_pages)
+            if not pages:
+                logger.warning("Official-site bootstrap found no crawlable pages")
+                return False
+
+            documents = []
+            metadata = []
+            for page in pages:
+                text = (page.get("text") or "").strip()
+                if not text:
+                    continue
+
+                url = page.get("url", "")
+                title = page.get("title") or url or "Official website"
+                documents.append({"content": text, "name": title})
+                metadata.append(
+                    {
+                        "document_type": "official_website",
+                        "academic_year": "current",
+                        "department": "General",
+                        "authority_level": page.get("authority_level", "medium"),
+                        "source_type": "website",
+                        "source_tier": "primary_official",
+                        "url": url,
+                        "source_file": url,
+                    }
+                )
+
+            if not documents:
+                logger.warning("Official-site bootstrap had pages but no usable text")
+                return False
+
+            added = await self.add_documents(documents, metadata)
+            logger.info("Official-site bootstrap complete: added %d chunks", added)
+            return added > 0
+        except Exception as exc:
+            logger.error("Official-site bootstrap failed: %s", exc, exc_info=True)
+            return False
 
     def _search_index(
         self, query_embedding: np.ndarray
