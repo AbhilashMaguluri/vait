@@ -21,7 +21,7 @@ RENDER_SECRETS_PATH = Path("/etc/secrets/.env")
 _local_env_path = PROJECT_ROOT / ".env"
 
 _local_loaded = load_dotenv(_local_env_path) if _local_env_path.exists() else False
-_secrets_loaded = load_dotenv(RENDER_SECRETS_PATH, override=True) if RENDER_SECRETS_PATH.exists() else False
+_secrets_loaded = load_dotenv(RENDER_SECRETS_PATH, override=False) if RENDER_SECRETS_PATH.exists() else False
 
 _dotenv_path = RENDER_SECRETS_PATH if _secrets_loaded else _local_env_path
 _dotenv_loaded = _secrets_loaded or _local_loaded
