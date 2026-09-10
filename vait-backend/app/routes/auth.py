@@ -13,7 +13,7 @@ from pydantic import BaseModel, EmailStr, Field
 from pymongo.errors import DuplicateKeyError
 
 from app.core.constants import USER_ROLE, USERS_COLLECTION
-from app.db import get_database
+from app.db import get_database, get_database_async
 from app.dependencies import get_current_user
 from app.services.activity_service import log_activity
 from app.services.security_service import create_access_token, hash_password, verify_password
@@ -53,10 +53,10 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(..., min_length=6, max_length=256)
 
 
-def _get_database_or_503():
+async def _get_database_or_503():
     try:
-        return get_database()
-    except RuntimeError as exc:
+        return await get_database_async()
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Authentication database is not available. {exc}",
@@ -94,7 +94,7 @@ async def login(request: LoginRequest):
     """Authenticate a user and issue a session JWT."""
 
     settings = get_settings()
-    database = _get_database_or_503()
+    database = await _get_database_or_503()
 
     user = await get_user_by_identifier(database, request.identifier)
     if user:
@@ -120,7 +120,7 @@ async def signup(request: SignupRequest):
     """Create a student/user account and issue a session JWT."""
 
     settings = get_settings()
-    database = _get_database_or_503()
+    database = await _get_database_or_503()
 
     email = normalize_email(request.email)
     preferred_username = normalize_username(request.username) if request.username else None
@@ -207,7 +207,7 @@ async def google_callback(
     """Complete Google OAuth and redirect the browser back to the frontend."""
 
     settings = get_settings()
-    database = _get_database_or_503()
+    database = await _get_database_or_503()
     default_frontend_redirect_url = settings.frontend_auth_redirect_url
 
     if error:
@@ -325,7 +325,7 @@ async def google_callback(
 async def logout(current_user: dict = Depends(get_current_user)):
     """Invalidate the current user's active session token."""
 
-    database = _get_database_or_503()
+    database = await _get_database_or_503()
     await database[USERS_COLLECTION].update_one(
         {"_id": current_user["_id"]},
         {
@@ -348,7 +348,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 async def update_profile(request: ProfileUpdateRequest, current_user: dict = Depends(get_current_user)):
     """Update the authenticated user's account profile."""
 
-    database = _get_database_or_503()
+    database = await _get_database_or_503()
     updates = {"updated_at": datetime.now(timezone.utc)}
 
     if request.username:
@@ -382,7 +382,7 @@ async def update_profile(request: ProfileUpdateRequest, current_user: dict = Dep
 async def change_password(request: PasswordChangeRequest, current_user: dict = Depends(get_current_user)):
     """Change the current user's password and rotate the session version."""
 
-    database = _get_database_or_503()
+    database = await _get_database_or_503()
     settings = get_settings()
 
     if not current_user.get("password_hash"):

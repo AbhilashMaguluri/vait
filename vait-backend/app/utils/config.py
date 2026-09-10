@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("vait.config")
@@ -16,8 +16,15 @@ logger = logging.getLogger("vait.config")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-_dotenv_path = PROJECT_ROOT / ".env"
-_dotenv_loaded = load_dotenv(_dotenv_path)
+# Support standard local .env as well as Render's Secret File location (/etc/secrets/.env)
+RENDER_SECRETS_PATH = Path("/etc/secrets/.env")
+_local_env_path = PROJECT_ROOT / ".env"
+
+_local_loaded = load_dotenv(_local_env_path) if _local_env_path.exists() else False
+_secrets_loaded = load_dotenv(RENDER_SECRETS_PATH, override=True) if RENDER_SECRETS_PATH.exists() else False
+
+_dotenv_path = RENDER_SECRETS_PATH if _secrets_loaded else _local_env_path
+_dotenv_loaded = _secrets_loaded or _local_loaded
 
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DOCS_DIR = DATA_DIR / "raw_docs"
@@ -77,7 +84,9 @@ class Settings(BaseSettings):
     """Environment-backed application settings."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=tuple(
+            str(p) for p in [RENDER_SECRETS_PATH, _local_env_path, Path(".env")] if p.exists()
+        ) or ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -90,10 +99,16 @@ class Settings(BaseSettings):
     port: int = Field(default=5000, alias="PORT")
     api_prefix: str = "/api/vait"
 
-    mongodb_uri: str = Field(default="mongodb://localhost:27017/vait", alias="MONGODB_URI")
+    mongodb_uri: str = Field(
+        default="mongodb://localhost:27017/vait",
+        validation_alias=AliasChoices("MONGODB_URI", "MONGO_URI"),
+    )
     mongodb_server_selection_timeout_ms: int = Field(
-        default=2000,
-        alias="MONGODB_SERVER_SELECTION_TIMEOUT_MS",
+        default=5000,
+        validation_alias=AliasChoices(
+            "MONGODB_SERVER_SELECTION_TIMEOUT_MS",
+            "MONGO_SERVER_SELECTION_TIMEOUT_MS",
+        ),
     )
     jwt_secret: str = Field(default="change-me-in-production", alias="JWT_SECRET")
     jwt_expiry: str = Field(default="7d", alias="JWT_EXPIRY")
@@ -196,7 +211,8 @@ def get_settings() -> Settings:
 
     settings = Settings()
     logger.info("Configuration loaded successfully")
-    logger.info("  .env file           : %s (loaded=%s)", _dotenv_path, _dotenv_loaded)
+    logger.info("  Render secrets file : %s (exists=%s, loaded=%s)", RENDER_SECRETS_PATH, RENDER_SECRETS_PATH.exists(), _secrets_loaded)
+    logger.info("  Local .env file     : %s (exists=%s, loaded=%s)", _local_env_path, _local_env_path.exists(), _local_loaded)
     logger.info("  Environment         : %s", settings.node_env)
     logger.info("  MongoDB URI         : %s", mask_connection_uri(settings.mongodb_uri))
     logger.info("  JWT expiry          : %s", settings.jwt_expiry)
@@ -209,6 +225,11 @@ def get_settings() -> Settings:
     logger.info("  OpenRouter key cfgd : %s", bool(settings.openrouter_api_key))
     logger.info("  Vector store path   : %s", settings.vector_db_path)
     logger.info("  API prefix          : %s", settings.api_prefix)
+    if "localhost" in settings.mongodb_uri and settings.node_env.lower() in {"production", "prod", "release"}:
+        logger.warning(
+            "MONGODB_URI is pointing to localhost in production (%s). Set MONGODB_URI (or MONGO_URI) in your Render environment variables.",
+            settings.node_env,
+        )
     return settings
 
 

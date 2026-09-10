@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.utils.config import get_settings, ensure_directories, LOGS_DIR
-from app.db import close_mongo_connection, connect_to_mongo
+from app.db import close_mongo_connection, connect_to_mongo, get_last_connection_error, is_db_connected
 from app.routes.auth import router as auth_router
 from app.routes.chat import router as chat_router
 from app.routes.admin import router as admin_router
@@ -76,11 +76,13 @@ async def lifespan(app: FastAPI):
             email=settings.admin_email,
             password=settings.admin_password,
         )
-        logger.info("Authentication database initialized")
+        logger.info("Authentication database initialized successfully on '%s'", database.name)
     except Exception as exc:
-        logger.warning(
-            "MongoDB is unavailable; auth/admin routes will fail until it is available: %s",
+        logger.error(
+            "CRITICAL: Failed to initialize MongoDB on startup: %s. "
+            "Authentication and database-backed routes will return 503 until MongoDB is accessible.",
             exc,
+            exc_info=True,
         )
 
     # Initialize RAG service on startup
@@ -165,10 +167,12 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         """Root endpoint - health check."""
+        db_ok = is_db_connected()
         return {
             "service": "VAIT",
             "version": settings.app_version,
-            "status": "operational"
+            "status": "operational" if db_ok else "degraded",
+            "database": "connected" if db_ok else "disconnected",
         }
     
     @app.get("/health")
@@ -178,15 +182,22 @@ def create_app() -> FastAPI:
 
         Returns comprehensive system status for demo impact:
           - Service info & operational status
+          - Database connection & collection status
           - Total vectors / website / social / PDF breakdown
           - Average adjusted score over last 10 queries
           - Last reindex timestamp
           - RAG configuration summary
         """
+        db_ok = is_db_connected()
+        overall_status = "operational" if (rag_service is not None and db_ok) else "degraded"
         base = {
             "service": "VAIT — Institutional University AI Assistant",
             "version": settings.app_version,
-            "status": "operational" if rag_service else "degraded",
+            "status": overall_status,
+            "database": {
+                "status": "connected" if db_ok else "disconnected",
+                "detail": None if db_ok else get_last_connection_error(),
+            },
             "engine": "FAISS + Groq/OpenRouter RAG Pipeline",
             "llm_primary_model": settings.groq_model,
             "llm_fallback_model": settings.openrouter_model,

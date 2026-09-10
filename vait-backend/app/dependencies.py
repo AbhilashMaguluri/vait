@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import ExpiredSignatureError, InvalidTokenError
 
-from app.db import get_database
+from app.db import get_database, get_database_async
 from app.services.user_service import ensure_user_record, get_user_by_id, serialize_user
 from app.services.security_service import decode_access_token
 from app.utils.config import get_settings
@@ -19,8 +19,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(b
 
     settings = get_settings()
     try:
-        database = get_database()
-    except RuntimeError as exc:
+        database = await get_database_async(settings)
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Authentication database is not available. {exc}",
