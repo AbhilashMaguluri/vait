@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import certifi
+
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo.errors import (
     ConfigurationError,
@@ -78,6 +80,7 @@ async def connect_to_mongo(settings: Settings | None = None) -> AsyncIOMotorData
             client = AsyncIOMotorClient(
                 settings.mongodb_uri,
                 serverSelectionTimeoutMS=settings.mongodb_server_selection_timeout_ms,
+                tlsCAFile=certifi.where(),
             )
             # Verify server responsiveness by pinging admin database
             await client.admin.command("ping")
