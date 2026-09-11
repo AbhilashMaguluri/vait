@@ -1,6 +1,5 @@
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { FileText, ShieldCheck, Clock } from 'lucide-react';
+import { Clock } from 'lucide-react';
+import UniversalResponseRenderer from './response/UniversalResponseRenderer';
 import './MessageBubble.css';
 
 function formatTime(isoString) {
@@ -13,90 +12,40 @@ function formatTime(isoString) {
   });
 }
 
-function ConfidenceBadge({ level }) {
-  const classMap = {
-    High: 'confidence-high',
-    Medium: 'confidence-medium',
-    Low: 'confidence-low',
-  };
-
-  return (
-    <span className={`confidence-badge ${classMap[level] || ''}`}>
-      <ShieldCheck size={11} className="badge-icon" />
-      <span>{level} Confidence</span>
-    </span>
-  );
-}
-
 export default function MessageBubble({ message }) {
   const isUser = message.role === 'user';
 
   return (
     <div className={`message-row ${isUser ? 'message-row-user' : 'message-row-assistant'}`}>
       <div className={`message-bubble ${isUser ? 'bubble-user' : 'bubble-assistant'}`}>
-        {!isUser && message.heading && (
-          <h4 className="message-heading">{message.heading}</h4>
-        )}
-
-        <div className="message-body">
-          {isUser ? (
-            <p className="message-text">{message.text}</p>
-          ) : (
-            <div className="message-markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {message.text}
-              </ReactMarkdown>
-              {message.isGenerating && <span className="blinking-cursor">|</span>}
+        {isUser ? (
+          <>
+            <div className="message-body">
+              <p className="message-text">{message.text}</p>
             </div>
-          )}
-        </div>
-
-        {!isUser && message.bullets && message.bullets.length > 0 && (
-          <ul className="message-bullets">
-            {message.bullets.map((b, i) => (
-              <li key={i}>{b}</li>
-            ))}
-          </ul>
-        )}
-
-        {/* Assistant Footer Info (Sources, Confidence, Time) */}
-        {!isUser && (
-          <div className="assistant-meta-strip">
-            {message.sources && message.sources.length > 0 && (
-              <div className="message-sources">
-                <span className="sources-label">Sources:</span>
-                <div className="source-tags-wrap">
-                  {message.sources.map((s, i) => (
-                    <span key={i} className="source-tag" title={s}>
-                      <FileText size={10} className="source-icon" />
-                      <span>{s}</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
+            {message.timestamp && (
+              <span className="message-time user-time">
+                {formatTime(message.timestamp)}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            {message.heading && (
+              <h4 className="message-heading">{message.heading}</h4>
             )}
 
-            <div className="message-footer-row">
-              {message.confidence && (
-                <div className="message-confidence">
-                  <ConfidenceBadge level={message.confidence} />
-                </div>
-              )}
-              {message.timestamp && (
+            <UniversalResponseRenderer message={message} />
+
+            {message.timestamp && (
+              <div className="message-assistant-time-row">
                 <span className="message-time">
                   <Clock size={10} className="time-icon" />
                   <span>{formatTime(message.timestamp)}</span>
                 </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* User Time */}
-        {isUser && message.timestamp && (
-          <span className="message-time user-time">
-            {formatTime(message.timestamp)}
-          </span>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

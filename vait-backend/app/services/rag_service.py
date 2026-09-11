@@ -21,6 +21,7 @@ from app.utils.config import (
 )
 from app.services.embedding_service import EmbeddingService
 from app.services.llm_service import LLMService
+from app.services.response_planner import response_planner, ResponsePlan
 from app.utils.text_chunker import TextChunker
 
 logger = logging.getLogger("vait.rag")
@@ -157,6 +158,7 @@ class RAGResponse:
     retrieval_score: float = 0.0
     question_type: str = ""
     intent: str = "general"  # classified intent category
+    response_type: str = "informational"  # classified presentation format
     retrieval_scores: List[float] = field(default_factory=list)
     is_refusal: bool = False
     performance: Optional[Dict] = None
@@ -460,6 +462,7 @@ class RAGService:
                 retrieval_score=1.0,
                 is_refusal=False,
                 intent="general",
+                response_type="simple",
             )
 
         # 2. Current Official Website Questions
@@ -510,6 +513,7 @@ class RAGService:
                 retrieval_score=1.0,
                 is_refusal=False,
                 intent="general",
+                response_type="factual",
             )
 
         # 3. Old / Legacy VVIT Website Questions
@@ -560,6 +564,7 @@ class RAGService:
                 retrieval_score=1.0,
                 is_refusal=False,
                 intent="general",
+                response_type="factual",
             )
 
         return None
@@ -692,9 +697,11 @@ class RAGService:
             self._cache_put(message, direct_resp)
             return direct_resp
 
-        # ── Classify intent ──────────────────────────────────────────
+        # ── Classify intent & Plan response format ───────────────────
         intent, matched_keywords = self.classify_intent(message)
         logger.debug("Intent: %s (keywords: %s)", intent, matched_keywords)
+        query_period = self._detect_query_period(message)
+        response_plan = response_planner.plan_response(message, intent=intent, period=query_period)
 
         # ── Check index readiness ────────────────────────────────────
         retrieval_empty = False
@@ -760,14 +767,21 @@ class RAGService:
             context = self._build_context(qualified)
             sources = list(dict.fromkeys(c.document_name for c in qualified))
             structured_sources = self._build_structured_sources(qualified)
-            final_prompt = self._build_generation_prompt(context=context, query=message)
+            final_prompt = self._build_generation_prompt(
+                context=context,
+                query=message,
+                formatting_instructions=response_plan.formatting_instructions,
+            )
 
             # ── Compute confidence (adjusted_score-based) ────────────────
             confidence = self._compute_confidence_adjusted(top_adjusted)
         else:
             context = ""
             sources, structured_sources = self._get_fallback_sources_for_query(message)
-            final_prompt = self._build_llm_only_prompt(query=message)
+            final_prompt = self._build_llm_only_prompt(
+                query=message,
+                formatting_instructions=response_plan.formatting_instructions,
+            )
             confidence = "Low"
 
         # ── Generate response ────────────────────────────────────────
@@ -790,6 +804,7 @@ class RAGService:
                 confidence="Low",
                 retrieval_score=0.0,
                 is_refusal=True,
+                response_type="no_answer",
             )
         except Exception as exc:
             logger.error("LLM generation failed: %s", exc)
@@ -803,16 +818,14 @@ class RAGService:
             response_text, confidence, sources,
         )
 
-        # ── ANSWER STRUCTURE ENFORCER ────────────────────────────────
-        response_text = self._enforce_answer_structure(response_text, message)
-
         # ── RESPONSE POLISH MODE ─────────────────────────────────────
         response_text = self._polish_response(response_text)
 
-        # ── CITATION FORMATTER — append sources block ────────────────
-        response_text = self._append_citations(
-            response_text, structured_sources,
-        )
+        # ── CITATION FORMATTER — append sources block for rich answers ──
+        if response_plan.response_type not in {"simple"}:
+            response_text = self._append_citations(
+                response_text, structured_sources,
+            )
 
         t_total = time.perf_counter() - t_start
 
@@ -838,6 +851,7 @@ class RAGService:
             retrieval_scores=retrieval_scores,
             performance=perf,
             intent=intent,
+            response_type=response_plan.response_type,
         )
 
         # ── Store in cache ───────────────────────────────────────────
@@ -879,10 +893,12 @@ class RAGService:
         direct_resp = self._handle_direct_institutional_query(message)
         if direct_resp is not None:
             yield f'data: {json.dumps({"type": "token", "content": direct_resp.reply})}\n\n'
-            yield f'data: {json.dumps({"type": "done", "reply": direct_resp.reply, "sources": direct_resp.sources, "structured_sources": direct_resp.structured_sources, "confidence": direct_resp.confidence})}\n\n'
+            yield f'data: {json.dumps({"type": "done", "reply": direct_resp.reply, "sources": direct_resp.sources, "structured_sources": direct_resp.structured_sources, "confidence": direct_resp.confidence, "response_type": direct_resp.response_type})}\n\n'
             return
 
         intent, matched_keywords = self.classify_intent(message)
+        query_period = self._detect_query_period(message)
+        response_plan = response_planner.plan_response(message, intent=intent, period=query_period)
 
         retrieval_empty = False
         retrieved_chunks = []
@@ -931,16 +947,23 @@ class RAGService:
             context = self._build_context(qualified)
             sources = list(dict.fromkeys(c.document_name for c in qualified))
             structured_sources = self._build_structured_sources(qualified)
-            final_prompt = self._build_generation_prompt(context=context, query=message)
+            final_prompt = self._build_generation_prompt(
+                context=context,
+                query=message,
+                formatting_instructions=response_plan.formatting_instructions,
+            )
             confidence = self._compute_confidence_adjusted(top_adjusted)
         else:
             context = ""
             sources, structured_sources = self._get_fallback_sources_for_query(message)
-            final_prompt = self._build_llm_only_prompt(query=message)
+            final_prompt = self._build_llm_only_prompt(
+                query=message,
+                formatting_instructions=response_plan.formatting_instructions,
+            )
             confidence = "Low"
 
         # Yield metadata first
-        yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "confidence": confidence, "retrieval_score": round(top_adjusted, 4), "intent": intent})}\n\n'
+        yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "confidence": confidence, "retrieval_score": round(top_adjusted, 4), "intent": intent, "response_type": response_plan.response_type})}\n\n'
 
         try:
             async for chunk in self.llm_service.generate_stream(
@@ -966,7 +989,7 @@ class RAGService:
             top_adjusted_score=top_adjusted,
         )
 
-        yield f'data: {json.dumps({"type": "done"})}\n\n'
+        yield f'data: {json.dumps({"type": "done", "response_type": response_plan.response_type})}\n\n'
 
     async def _bootstrap_official_sites_if_empty(self) -> bool:
         """
@@ -1444,13 +1467,9 @@ class RAGService:
         return "\n---\n".join(parts)
 
     @staticmethod
-    def _build_generation_prompt(context: str, query: str) -> str:
+    def _build_generation_prompt(context: str, query: str, formatting_instructions: str = "") -> str:
         """Build the final user prompt payload for the generation step."""
-        return (
-            "CONTEXT:\n"
-            f"{context}\n\n"
-            "USER QUESTION:\n"
-            f"{query}\n\n"
+        base_instructions = (
             "INSTRUCTIONS & DUAL-SOURCE RECONCILIATION RULES:\n"
             "1. Answer ONLY from CONTEXT.\n"
             "2. Understand the institutional transition:\n"
@@ -1461,13 +1480,29 @@ class RAGService:
             "   - For questions about HISTORICAL facts (past syllabus, older regulations, legacy records): Legacy VVIT sources (vvitguntur.com) represent the older period.\n"
             "   - If both sources are present, do not randomly choose between them: explain the transition from VVIT to VVITU and specify which era each fact belongs to.\n"
             "4. NEVER describe vvitguntur.com as the current official website of VVITU.\n"
-            "5. If information is unclear or unavailable, state clearly that the specific institutional details are not available.\n"
-            "6. Keep the response concise, student-friendly, and structured with title, explanation, key points, and sources."
+            "5. If information is unclear or unavailable, state clearly that the specific institutional details are not available."
+        )
+        if formatting_instructions:
+            format_block = f"\n\nDYNAMIC FORMATTING DIRECTIVE:\n{formatting_instructions}"
+        else:
+            format_block = "\n6. Keep the response concise, student-friendly, and cleanly structured."
+
+        return (
+            "CONTEXT:\n"
+            f"{context}\n\n"
+            "USER QUESTION:\n"
+            f"{query}\n\n"
+            f"{base_instructions}{format_block}"
         )
 
     @staticmethod
-    def _build_llm_only_prompt(query: str) -> str:
+    def _build_llm_only_prompt(query: str, formatting_instructions: str = "") -> str:
         """Build the final user prompt payload when no context is available."""
+        format_block = (
+            f"\n\nDYNAMIC FORMATTING DIRECTIVE:\n{formatting_instructions}"
+            if formatting_instructions
+            else "\n5. Keep the response concise, student-friendly, and cleanly structured."
+        )
         return (
             "USER QUESTION:\n"
             f"{query}\n\n"
@@ -1478,8 +1513,8 @@ class RAGService:
             "   - VAIT stands for VVIT's Artificial Intelligence Technology.\n"
             "2. If asked about the current official website, cite https://vvitu.ac.in/.\n"
             "3. If asked about the old VVIT website, cite https://vvitguntur.com/.\n"
-            "4. For current matters, prioritize VVITU. For historical matters, use legacy VVIT.\n"
-            "5. Keep the response concise, student-friendly, and cleanly structured."
+            "4. For current matters, prioritize VVITU. For historical matters, use legacy VVIT."
+            f"{format_block}"
         )
 
     @staticmethod
@@ -1509,12 +1544,13 @@ class RAGService:
         retrieval_scores: List[float],
         performance: Optional[Dict] = None,
         intent: str = "general",
+        response_type: str = "informational",
     ) -> RAGResponse:
         """
         Post-process LLM output into a structured RAGResponse.
 
         - Trims trailing whitespace
-        - Attaches unique sources, structured_sources, confidence, retrieval_score, performance
+        - Attaches unique sources, structured_sources, confidence, retrieval_score, performance, response_type
         """
         cleaned = text.rstrip() if text else ""
         return RAGResponse(
@@ -1527,6 +1563,7 @@ class RAGService:
             is_refusal=False,
             performance=performance,
             intent=intent,
+            response_type=response_type,
         )
 
     @staticmethod

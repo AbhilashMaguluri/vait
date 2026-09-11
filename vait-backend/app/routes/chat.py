@@ -81,6 +81,10 @@ class ChatResponse(BaseModel):
         "general",
         description="Classified query intent: academic, admissions, examinations, placements, events, infrastructure, general",
     )
+    response_type: str = Field(
+        "informational",
+        description="Classified adaptive presentation format",
+    )
     performance: Optional[Dict] = Field(
         None,
         description="Timing breakdown: embed_ms, retrieval_ms, generation_ms, total_ms, intent, cache_hit",
@@ -216,6 +220,7 @@ async def chat(
             confidence=response.confidence,
             retrieval_score=response.retrieval_score,
             intent=response.intent,
+            response_type=getattr(response, "response_type", "informational"),
             performance=response.performance,
             conversation_id=conversation_id,
         )

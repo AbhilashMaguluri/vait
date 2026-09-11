@@ -26,6 +26,7 @@ class ChatResult:
     is_refusal: bool
     performance: Optional[Dict] = None
     intent: str = "general"
+    response_type: str = "informational"
 
 
 class ChatController:
@@ -79,6 +80,7 @@ class ChatController:
             is_refusal=response.is_refusal,
             performance=response.performance,
             intent=response.intent,
+            response_type=getattr(response, "response_type", "informational"),
         )
 
     async def process_message_stream(

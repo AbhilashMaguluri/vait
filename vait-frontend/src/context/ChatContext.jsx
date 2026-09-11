@@ -58,6 +58,8 @@ function normalizeConversation(conv) {
     messages: (conv.messages || []).map((message) => ({
       ...message,
       text: message.text || '',
+      responseType: message.response_type || message.responseType || 'informational',
+      structuredSources: message.structured_sources || message.structuredSources || [],
       timestamp: message.timestamp || new Date().toISOString(),
     })),
     category: conv.category || 'Academic',
@@ -215,6 +217,8 @@ export function ChatProvider({ children }) {
                       sources: state.sources,
                       confidence: state.confidence,
                       category: state.category,
+                      responseType: state.responseType,
+                      structuredSources: state.structuredSources,
                       isGenerating: false,
                       timestamp: state.timestamp || m.timestamp,
                     }

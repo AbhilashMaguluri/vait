@@ -165,6 +165,8 @@ export async function sendMessageToVAIT({
       sources: data.sources || [],
       confidence: data.confidence || "Low",
       category,
+      responseType: data.response_type || "informational",
+      structuredSources: data.structured_sources || [],
       timestamp: new Date().toISOString(),
       conversationId: data.conversation_id || conversationId,
     };
@@ -227,6 +229,8 @@ export async function streamMessageToVAIT({
       sources: [],
       confidence: "Low",
       category: detectCategory(message),
+      responseType: "informational",
+      structuredSources: [],
       department: department || "General",
       academicYear: academicYear || "2025-26",
       timestamp: new Date().toISOString(),
@@ -251,6 +255,8 @@ export async function streamMessageToVAIT({
               state.sources = parsed.sources || [];
               state.confidence = parsed.confidence || "Low";
               if (parsed.intent) state.category = parsed.intent;
+              if (parsed.response_type) state.responseType = parsed.response_type;
+              if (parsed.structured_sources) state.structuredSources = parsed.structured_sources;
               onUpdate({ ...state, isGenerating: true });
             } else if (parsed.type === "content") {
               state.text += parsed.content;
@@ -262,6 +268,8 @@ export async function streamMessageToVAIT({
               state.text += `\n\n[Error: ${parsed.error}]`;
               onUpdate({ ...state, isGenerating: false });
             } else if (parsed.type === "done") {
+              if (parsed.response_type) state.responseType = parsed.response_type;
+              if (parsed.structured_sources) state.structuredSources = parsed.structured_sources;
               onUpdate({ ...state, isGenerating: false });
             }
           } catch (e) {
