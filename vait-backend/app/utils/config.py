@@ -204,6 +204,42 @@ class Settings(BaseSettings):
                 return True
         return value
 
+    @field_validator("groq_model", "default_llm_model", mode="before")
+    @classmethod
+    def validate_groq_model(cls, value):
+        """Ensure decommissioned or deprecated Llama models in env vars are upgraded."""
+        if not value or "llama" in str(value).lower():
+            logger.warning(
+                "Deprecated Groq model '%s' detected in environment. Upgrading to openai/gpt-oss-120b.",
+                value,
+            )
+            return "openai/gpt-oss-120b"
+        return value
+
+    @field_validator("openrouter_model", mode="before")
+    @classmethod
+    def validate_openrouter_model(cls, value):
+        """Ensure deprecated OpenRouter fallback models in env vars are upgraded."""
+        if not value or "mistral" in str(value).lower():
+            logger.warning(
+                "Invalid OpenRouter fallback model '%s' detected in environment. Upgrading to meta-llama/llama-3.1-8b-instruct.",
+                value,
+            )
+            return "meta-llama/llama-3.1-8b-instruct"
+        return value
+
+    @field_validator("embedding_model", mode="before")
+    @classmethod
+    def validate_embedding_model(cls, value):
+        """Ensure incompatible embedding models in env vars are upgraded to 1536-dim standard."""
+        if not value or "nomic" in str(value).lower():
+            logger.warning(
+                "Incompatible embedding model '%s' detected in environment. Upgrading to openai/text-embedding-3-small.",
+                value,
+            )
+            return "openai/text-embedding-3-small"
+        return value
+
 
 @lru_cache()
 def get_settings() -> Settings:
