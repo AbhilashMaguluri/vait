@@ -1019,7 +1019,7 @@ class RAGService:
         conv_reply = self._is_conversational_query(message)
         if conv_reply is not None:
             yield f'data: {json.dumps({"type": "metadata", "sources": [], "structured_sources": [], "source_visibility": "none", "confidence": "High", "retrieval_score": 1.0, "intent": "general", "response_type": "simple"})}\n\n'
-            yield f'data: {json.dumps({"type": "token", "content": conv_reply})}\n\n'
+            yield f'data: {json.dumps({"type": "content", "content": conv_reply})}\n\n'
             yield f'data: {json.dumps({"type": "done", "reply": conv_reply, "sources": [], "structured_sources": [], "source_visibility": "none", "confidence": "High", "response_type": "simple"})}\n\n'
             return
 
@@ -1027,7 +1027,7 @@ class RAGService:
         direct_resp = self._handle_direct_institutional_query(message)
         if direct_resp is not None:
             yield f'data: {json.dumps({"type": "metadata", "sources": direct_resp.sources, "structured_sources": direct_resp.structured_sources, "source_visibility": direct_resp.source_visibility, "confidence": direct_resp.confidence, "retrieval_score": 1.0, "intent": direct_resp.intent, "response_type": direct_resp.response_type})}\n\n'
-            yield f'data: {json.dumps({"type": "token", "content": direct_resp.reply})}\n\n'
+            yield f'data: {json.dumps({"type": "content", "content": direct_resp.reply})}\n\n'
             yield f'data: {json.dumps({"type": "done", "reply": direct_resp.reply, "sources": direct_resp.sources, "structured_sources": direct_resp.structured_sources, "source_visibility": direct_resp.source_visibility, "confidence": direct_resp.confidence, "response_type": direct_resp.response_type})}\n\n'
             return
 

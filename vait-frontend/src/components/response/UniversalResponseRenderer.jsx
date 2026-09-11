@@ -172,7 +172,7 @@ export default function UniversalResponseRenderer({ message }) {
       </div>
 
       {/* 4. Adaptive Sources & Confidence Footer */}
-      {sourceVisibility !== 'none' && (
+      {sourceVisibility !== 'none' && !isGenerating && (
         <div className="vait-response-footer">
           <AdaptiveSources
             sources={message.sources}

@@ -266,8 +266,9 @@ export async function streamMessageToVAIT({
               if (parsed.structured_sources) state.structuredSources = parsed.structured_sources;
               if (parsed.source_visibility) state.sourceVisibility = parsed.source_visibility;
               onUpdate({ ...state, isGenerating: true });
-            } else if (parsed.type === "content") {
-              state.text += parsed.content;
+            } else if (parsed.type === "content" || parsed.type === "token") {
+              const chunk = parsed.content ?? parsed.token ?? "";
+              state.text += chunk;
               onUpdate({ ...state, isGenerating: true });
             } else if (parsed.type === "fallback_triggered") {
               state.text = ""; // Clear output on fallback to avoid duplicates
@@ -276,6 +277,9 @@ export async function streamMessageToVAIT({
               state.text += `\n\n[Error: ${parsed.error}]`;
               onUpdate({ ...state, isGenerating: false });
             } else if (parsed.type === "done") {
+              if (parsed.reply && !state.text.trim()) {
+                state.text = parsed.reply;
+              }
               if (parsed.response_type) state.responseType = parsed.response_type;
               if (parsed.structured_sources) state.structuredSources = parsed.structured_sources;
               if (parsed.source_visibility) state.sourceVisibility = parsed.source_visibility;
@@ -291,7 +295,11 @@ export async function streamMessageToVAIT({
     if (buffer.trim().startsWith("data: ")) {
       try {
         const parsed = JSON.parse(buffer.replace(/^data:\s*/, "").trim());
-        if (parsed.type === "content") state.text += parsed.content;
+        if (parsed.type === "content" || parsed.type === "token") {
+          state.text += parsed.content ?? parsed.token ?? "";
+        } else if (parsed.type === "done" && parsed.reply && !state.text.trim()) {
+          state.text = parsed.reply;
+        }
       } catch (e) {}
     }
     onUpdate({ ...state, isGenerating: false });

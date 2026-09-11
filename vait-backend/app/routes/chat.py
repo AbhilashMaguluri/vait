@@ -276,8 +276,10 @@ async def chat_stream(
                         continue
                     if payload.get("type") == "metadata":
                         metadata.update(payload)
-                    elif payload.get("type") == "content":
-                        reply_parts.append(payload.get("content", ""))
+                    elif payload.get("type") in ("content", "token"):
+                        reply_parts.append(payload.get("content", "") or payload.get("token", ""))
+                    elif payload.get("type") == "done" and payload.get("reply") and not reply_parts:
+                        reply_parts.append(payload.get("reply", ""))
                     elif payload.get("type") == "error":
                         reply_parts.append(payload.get("error", ""))
                 yield chunk

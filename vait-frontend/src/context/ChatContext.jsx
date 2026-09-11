@@ -139,23 +139,6 @@ export function ChatProvider({ children }) {
   const sendMessage = useCallback(
     async (text, retryAssistantId = null) => {
       let convId = activeConversationId;
-
-      if (!convId) {
-        convId = generateId();
-        const conv = {
-          id: convId,
-          title: text.slice(0, 50) + (text.length > 50 ? '...' : ''),
-          messages: [],
-          category: detectCategory(text),
-          confidence: null,
-          sources: [],
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        setConversations((prev) => [conv, ...prev]);
-        setActiveConversationId(convId);
-      }
-
       const aiMessageId = retryAssistantId || generateId();
       const assistantTimestamp = new Date().toISOString();
 
@@ -183,19 +166,32 @@ export function ChatProvider({ children }) {
           timestamp: assistantTimestamp,
         };
 
-        setConversations((prev) =>
-          prev.map((c) => {
-            if (c.id !== convId) return c;
-            const isFirst = c.messages.length === 0;
-            return {
-              ...c,
-              title: isFirst ? text.slice(0, 50) + (text.length > 50 ? '...' : '') : c.title,
-              category: isFirst ? detectCategory(text) : c.category,
-              messages: [...c.messages, userMessage, initialAssistantMessage],
-              updatedAt: new Date().toISOString(),
-            };
-          })
-        );
+        if (!convId) {
+          convId = generateId();
+          const conv = {
+            id: convId,
+            title: text.slice(0, 50) + (text.length > 50 ? '...' : ''),
+            messages: [userMessage, initialAssistantMessage],
+            category: detectCategory(text),
+            confidence: null,
+            sources: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          setConversations((prev) => [conv, ...prev]);
+          setActiveConversationId(convId);
+        } else {
+          setConversations((prev) =>
+            prev.map((c) => {
+              if (c.id !== convId) return c;
+              return {
+                ...c,
+                messages: [...c.messages, userMessage, initialAssistantMessage],
+                updatedAt: new Date().toISOString(),
+              };
+            })
+          );
+        }
       } else {
         setConversations((prev) =>
           prev.map((c) => {
