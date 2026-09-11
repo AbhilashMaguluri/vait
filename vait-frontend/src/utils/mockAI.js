@@ -215,7 +215,12 @@ export async function streamMessageToVAIT({
     });
 
     if (!res.ok) {
-      throw new Error(`Backend returned ${res.status}`);
+      let detail = `Backend returned ${res.status}`;
+      try {
+        const errJson = await res.json();
+        detail = formatApiError(errJson?.detail) || detail;
+      } catch {}
+      throw new Error(detail);
     }
 
     const reader = res.body.getReader();
@@ -288,32 +293,34 @@ export async function streamMessageToVAIT({
     onUpdate({ ...state, isGenerating: false });
     return state;
   } catch (err) {
-    console.error("[VAIT] Stream failed, using fallback:", err);
-    const category = detectCategory(message);
-    const responses = MOCK_RESPONSES[category] || MOCK_RESPONSES["Academic"];
-    const selected = responses[Math.floor(Math.random() * responses.length)];
-
-    let state = {
-      text: "",
-      heading: selected.heading,
-      bullets: selected.bullets,
-      sources: MOCK_SOURCES[category] || MOCK_SOURCES["Academic"],
-      confidence: pickConfidence(),
-      category,
-      department: department || "General",
-      academicYear: academicYear || "2025-26",
-      timestamp: new Date().toISOString(),
-      isGenerating: true,
-    };
-
-    const mockText = selected.body;
-    for (let i = 0; i < mockText.length; i += 5) {
-      state.text += mockText.substr(i, 5);
-      onUpdate({ ...state, isGenerating: true });
-      await new Promise((r) => setTimeout(r, 20));
+    console.warn("[VAIT] Stream request failed, attempting direct API fallback:", err);
+    try {
+      const direct = await sendMessageToVAIT({
+        message,
+        department,
+        academicYear,
+        history,
+        conversationId,
+        token,
+      });
+      const finalState = {
+        text: direct.text || "",
+        heading: direct.heading || null,
+        bullets: direct.bullets || null,
+        sources: direct.sources || [],
+        confidence: direct.confidence || "Low",
+        category: direct.category,
+        responseType: direct.responseType || "informational",
+        structuredSources: direct.structuredSources || [],
+        timestamp: direct.timestamp,
+        isGenerating: false,
+      };
+      onUpdate(finalState);
+      return finalState;
+    } catch (fallbackErr) {
+      console.error("[VAIT] Direct fallback also failed:", fallbackErr);
+      throw fallbackErr;
     }
-    onUpdate({ ...state, isGenerating: false });
-    return state;
   }
 }
 

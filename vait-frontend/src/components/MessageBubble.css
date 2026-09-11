@@ -309,6 +309,124 @@
   50% { opacity: 0; }
 }
 
+/* Subtle, calm, professional thinking indicator inside the response container */
+.vait-thinking-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 2px;
+  color: var(--vait-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.vait-thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vait-thinking-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--vait-primary, #1e293b);
+  opacity: 0.35;
+  animation: vaitDotFade 1.4s ease-in-out infinite;
+}
+
+.vait-thinking-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.vait-thinking-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes vaitDotFade {
+  0%, 100% {
+    opacity: 0.25;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.1);
+  }
+}
+
+.vait-thinking-text {
+  font-size: 13px;
+  color: var(--vait-text-secondary, #475569);
+  letter-spacing: 0.1px;
+}
+
+/* Error state inside response container */
+.vait-response-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 4px 2px;
+}
+
+.vait-error-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background-color: var(--vait-danger-bg, #fef2f2);
+  color: var(--vait-danger, #dc2626);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.vait-error-body {
+  flex: 1;
+}
+
+.vait-error-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--vait-text-primary, #1e293b);
+  margin-bottom: 3px;
+}
+
+.vait-error-desc {
+  font-size: 12.5px;
+  color: var(--vait-text-secondary, #64748b);
+  margin: 0 0 10px 0;
+  line-height: 1.45;
+}
+
+.vait-retry-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--vait-primary, #0f172a);
+  background-color: var(--vait-bg, #f8fafc);
+  border: 1px solid var(--vait-border, #e2e8f0);
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.vait-retry-button:hover {
+  background-color: var(--vait-surface-hover, #f1f5f9);
+  border-color: var(--vait-primary, #0f172a);
+}
+
+.bubble-assistant.is-thinking {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  transition: all 0.2s ease-out;
+}
+
 @media (max-width: 768px) {
   .bubble-assistant,
   .bubble-user {

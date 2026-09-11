@@ -28,12 +28,15 @@ const SUGGESTIONS = [
 ];
 
 export default function ChatWindow() {
-  const { activeConversation, loading } = useChat();
+  const { activeConversation, loading, retryMessage } = useChat();
   const bottomRef = useRef(null);
+
+  const lastMessage = activeConversation?.messages?.slice(-1)[0];
+  const lastMessageLength = lastMessage?.text?.length || 0;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activeConversation?.messages?.length, loading]);
+  }, [activeConversation?.messages?.length, loading, lastMessageLength]);
 
   const hasMessages = Boolean(activeConversation?.messages?.length);
 
@@ -69,22 +72,8 @@ export default function ChatWindow() {
         ) : (
           <div className="chat-messages" role="log" aria-live="polite">
             {activeConversation.messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
+              <MessageBubble key={msg.id} message={msg} onRetry={retryMessage} />
             ))}
-            {loading && (
-              <div className="message-row message-row-assistant">
-                <div className="message-bubble bubble-assistant loading-bubble" aria-label="VAIT is generating a response">
-                  <div className="loading-content">
-                    <span className="dot-typing">
-                      <span />
-                      <span />
-                      <span />
-                    </span>
-                    <span className="loading-text">Synthesizing institutional answer...</span>
-                  </div>
-                </div>
-              </div>
-            )}
             <div ref={bottomRef} />
           </div>
         )}

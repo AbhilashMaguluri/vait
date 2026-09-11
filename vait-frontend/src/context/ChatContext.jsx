@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { sendMessageToVAIT, detectCategory } from '../utils/mockAI';
+import { sendMessageToVAIT, streamMessageToVAIT, detectCategory } from '../utils/mockAI';
 import { buildApiUrl } from '../utils/apiConfig';
 import { useAuth } from './AuthContext';
 
@@ -60,6 +60,7 @@ function normalizeConversation(conv) {
       text: message.text || '',
       responseType: message.response_type || message.responseType || 'informational',
       structuredSources: message.structured_sources || message.structuredSources || [],
+      isGenerating: false,
       timestamp: message.timestamp || new Date().toISOString(),
     })),
     category: conv.category || 'Academic',
@@ -136,7 +137,7 @@ export function ChatProvider({ children }) {
   }, []);
 
   const sendMessage = useCallback(
-    async (text) => {
+    async (text, retryAssistantId = null) => {
       let convId = activeConversationId;
 
       if (!convId) {
@@ -155,52 +156,123 @@ export function ChatProvider({ children }) {
         setActiveConversationId(convId);
       }
 
-      const userMessage = {
-        id: generateId(),
-        role: 'user',
-        text,
-        timestamp: new Date().toISOString(),
-      };
-
-      const aiMessageId = generateId();
+      const aiMessageId = retryAssistantId || generateId();
       const assistantTimestamp = new Date().toISOString();
 
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c.id !== convId) return c;
-          const isFirst = c.messages.length === 0;
-          return {
-            ...c,
-            title: isFirst ? text.slice(0, 50) + (text.length > 50 ? '...' : '') : c.title,
-            category: isFirst ? detectCategory(text) : c.category,
-            messages: [
-              ...c.messages,
-              userMessage,
-              {
-                id: aiMessageId,
-                role: 'assistant',
-                text: '',
-                isGenerating: true,
-                timestamp: assistantTimestamp,
-              },
-            ],
-            updatedAt: new Date().toISOString(),
-          };
-        })
-      );
+      if (!retryAssistantId) {
+        const userMessage = {
+          id: generateId(),
+          role: 'user',
+          text,
+          timestamp: new Date().toISOString(),
+        };
+
+        const initialAssistantMessage = {
+          id: aiMessageId,
+          role: 'assistant',
+          text: '',
+          isGenerating: true,
+          status: 'thinking',
+          statusText: 'VAIT is thinking...',
+          responseType: 'informational',
+          structuredSources: [],
+          sources: [],
+          confidence: null,
+          originalQuery: text,
+          timestamp: assistantTimestamp,
+        };
+
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId) return c;
+            const isFirst = c.messages.length === 0;
+            return {
+              ...c,
+              title: isFirst ? text.slice(0, 50) + (text.length > 50 ? '...' : '') : c.title,
+              category: isFirst ? detectCategory(text) : c.category,
+              messages: [...c.messages, userMessage, initialAssistantMessage],
+              updatedAt: new Date().toISOString(),
+            };
+          })
+        );
+      } else {
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId) return c;
+            return {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === aiMessageId
+                  ? {
+                      ...m,
+                      text: '',
+                      error: null,
+                      isGenerating: true,
+                      status: 'thinking',
+                      statusText: 'VAIT is thinking...',
+                      timestamp: assistantTimestamp,
+                    }
+                  : m
+              ),
+              updatedAt: new Date().toISOString(),
+            };
+          })
+        );
+      }
 
       setLoading(true);
 
       try {
         const currentConversation = conversations.find((c) => c.id === convId);
-        const state = await sendMessageToVAIT({
+        const historyForLLM = (currentConversation?.messages || []).filter(
+          (m) => m.id !== aiMessageId
+        );
+
+        const finalState = await streamMessageToVAIT({
           message: text,
           department,
           academicYear,
-          history: currentConversation?.messages || [],
+          history: historyForLLM,
           conversationId: convId,
           token,
+          onUpdate: (streamState) => {
+            setConversations((prev) =>
+              prev.map((c) => {
+                if (c.id !== convId) return c;
+                return {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === aiMessageId
+                      ? {
+                          ...m,
+                          text: streamState.text,
+                          heading: streamState.heading || m.heading,
+                          bullets: streamState.bullets || m.bullets,
+                          sources: streamState.sources || m.sources,
+                          confidence: streamState.confidence || m.confidence,
+                          category: streamState.category || m.category,
+                          responseType: streamState.responseType || m.responseType,
+                          structuredSources: streamState.structuredSources || m.structuredSources,
+                          isGenerating: streamState.isGenerating,
+                          status: streamState.text?.trim() ? 'streaming' : 'thinking',
+                          statusText: streamState.text?.trim() ? null : 'VAIT is thinking...',
+                          error: null,
+                          timestamp: streamState.timestamp || m.timestamp,
+                        }
+                      : m
+                  ),
+                  confidence: streamState.confidence || c.confidence,
+                  sources: streamState.sources?.length ? streamState.sources : c.sources,
+                  updatedAt: new Date().toISOString(),
+                };
+              })
+            );
+          },
         });
+
+        const replyText = finalState?.text?.trim()
+          ? finalState.text
+          : "I couldn't generate a response. Please try again.";
 
         setConversations((prev) =>
           prev.map((c) => {
@@ -211,21 +283,24 @@ export function ChatProvider({ children }) {
                 m.id === aiMessageId
                   ? {
                       ...m,
-                      text: state.text,
-                      heading: state.heading,
-                      bullets: state.bullets,
-                      sources: state.sources,
-                      confidence: state.confidence,
-                      category: state.category,
-                      responseType: state.responseType,
-                      structuredSources: state.structuredSources,
+                      text: replyText,
+                      heading: finalState?.heading || null,
+                      bullets: finalState?.bullets || null,
+                      sources: finalState?.sources || [],
+                      confidence: finalState?.confidence || 'Low',
+                      category: finalState?.category || m.category,
+                      responseType: finalState?.responseType || m.responseType,
+                      structuredSources: finalState?.structuredSources || m.structuredSources,
                       isGenerating: false,
-                      timestamp: state.timestamp || m.timestamp,
+                      status: 'complete',
+                      statusText: null,
+                      error: null,
+                      timestamp: finalState?.timestamp || m.timestamp,
                     }
                   : m
               ),
-              confidence: state.confidence,
-              sources: state.sources,
+              confidence: finalState?.confidence || c.confidence,
+              sources: finalState?.sources?.length ? finalState.sources : c.sources,
               updatedAt: new Date().toISOString(),
             };
           })
@@ -243,8 +318,12 @@ export function ChatProvider({ children }) {
                 m.id === aiMessageId
                   ? {
                       ...m,
-                      text: `Error: ${errorText}`,
+                      text: '',
+                      error: errorText,
+                      originalQuery: text,
                       isGenerating: false,
+                      status: 'error',
+                      statusText: null,
                       confidence: 'Low',
                       sources: [],
                       timestamp: m.timestamp || assistantTimestamp,
@@ -262,6 +341,22 @@ export function ChatProvider({ children }) {
       }
     },
     [academicYear, activeConversationId, conversations, department, token]
+  );
+
+  const retryMessage = useCallback(
+    (message) => {
+      if (!message) return;
+      const query =
+        message.originalQuery ||
+        conversations
+          .find((c) => c.id === activeConversationId)
+          ?.messages.find((m, i, arr) => arr[i + 1]?.id === message.id && m.role === 'user')
+          ?.text;
+      if (query) {
+        sendMessage(query, message.id);
+      }
+    },
+    [activeConversationId, conversations, sendMessage]
   );
 
   const deleteConversation = useCallback(
@@ -341,6 +436,7 @@ export function ChatProvider({ children }) {
     setCategoryFilter,
     createConversation,
     sendMessage,
+    retryMessage,
     deleteConversation,
     renameConversation,
     clearChat,
