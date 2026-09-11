@@ -167,6 +167,7 @@ export async function sendMessageToVAIT({
       category,
       responseType: data.response_type || "informational",
       structuredSources: data.structured_sources || [],
+      sourceVisibility: data.source_visibility || "none",
       timestamp: new Date().toISOString(),
       conversationId: data.conversation_id || conversationId,
     };
@@ -236,6 +237,7 @@ export async function streamMessageToVAIT({
       category: detectCategory(message),
       responseType: "informational",
       structuredSources: [],
+      sourceVisibility: "none",
       department: department || "General",
       academicYear: academicYear || "2025-26",
       timestamp: new Date().toISOString(),
@@ -262,6 +264,7 @@ export async function streamMessageToVAIT({
               if (parsed.intent) state.category = parsed.intent;
               if (parsed.response_type) state.responseType = parsed.response_type;
               if (parsed.structured_sources) state.structuredSources = parsed.structured_sources;
+              if (parsed.source_visibility) state.sourceVisibility = parsed.source_visibility;
               onUpdate({ ...state, isGenerating: true });
             } else if (parsed.type === "content") {
               state.text += parsed.content;
@@ -275,6 +278,7 @@ export async function streamMessageToVAIT({
             } else if (parsed.type === "done") {
               if (parsed.response_type) state.responseType = parsed.response_type;
               if (parsed.structured_sources) state.structuredSources = parsed.structured_sources;
+              if (parsed.source_visibility) state.sourceVisibility = parsed.source_visibility;
               onUpdate({ ...state, isGenerating: false });
             }
           } catch (e) {
@@ -312,6 +316,7 @@ export async function streamMessageToVAIT({
         category: direct.category,
         responseType: direct.responseType || "informational",
         structuredSources: direct.structuredSources || [],
+        sourceVisibility: direct.sourceVisibility || "none",
         timestamp: direct.timestamp,
         isGenerating: false,
       };

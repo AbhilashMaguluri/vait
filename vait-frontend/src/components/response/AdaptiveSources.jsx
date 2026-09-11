@@ -1,6 +1,16 @@
 import { Globe, FileText, ExternalLink, ShieldCheck, History } from 'lucide-react';
 
-export default function AdaptiveSources({ sources = [], structuredSources = [], isCompact = false }) {
+export default function AdaptiveSources({
+  sources = [],
+  structuredSources = [],
+  isCompact = false,
+  sourceVisibility = 'none',
+}) {
+  // If visibility tier is explicitly 'none', do NOT render anything
+  if (sourceVisibility === 'none') {
+    return null;
+  }
+
   // Normalize items
   const items = structuredSources && structuredSources.length > 0
     ? structuredSources
@@ -13,8 +23,8 @@ export default function AdaptiveSources({ sources = [], structuredSources = [], 
 
   if (!items || items.length === 0) return null;
 
-  // Compact display for simple/short answers
-  if (isCompact || items.length === 1) {
+  // Compact display for simple/short answers or single source
+  if (sourceVisibility === 'compact' || isCompact || items.length === 1) {
     const first = items[0];
     const isCurrent = (first.period_label || '').toLowerCase().includes('current') || (first.url || '').includes('vvitu.ac.in');
     return (

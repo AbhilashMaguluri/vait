@@ -155,6 +155,7 @@ class RAGResponse:
     sources: List[str]
     structured_sources: List[Dict] = field(default_factory=list)
     confidence: str = "Low"  # "High" | "Medium" | "Low"
+    source_visibility: str = "none"  # "none" | "compact" | "full"
     retrieval_score: float = 0.0
     question_type: str = ""
     intent: str = "general"  # classified intent category
@@ -325,9 +326,53 @@ class RAGService:
         while len(self._cache) > CACHE_CAPACITY:
             self._cache.popitem(last=False)
 
-    @staticmethod
-    def _is_identity_query(query: str) -> bool:
-        """Check if the query is asking about VAIT's identity, name, or expansion."""
+    @classmethod
+    def _is_conversational_query(cls, query: str) -> Optional[str]:
+        """
+        Detect casual conversational queries, greetings, thanks, and pleasantries.
+        Returns a natural, friendly reply string if matched, else None.
+        """
+        q = query.strip().lower()
+        q_clean = re.sub(r"[?!.,;:]+$", "", q).strip()
+
+        # Greetings
+        if re.search(r"^(hi|hello|hey|hey there|hi vait|hello vait|good morning|good afternoon|good evening|greetings)\b", q_clean):
+            if re.search(r"\b(how are you|how're you|how are you doing|how's it going|what's up|sup)\b", q_clean):
+                return (
+                    "Hello! I'm doing well, thank you for asking. "
+                    "I am VAIT, your AI assistant for VVIT University (VVITU). "
+                    "How can I help you today?"
+                )
+            return (
+                "Hello! I am VAIT (VVIT's Artificial Intelligence Technology). "
+                "How can I assist you with VVITU or academic information today?"
+            )
+
+        # Well-being check-ins
+        if re.search(r"^(how are you|how are you doing|how are you dude|how are you bro|how's it going|how do you do|what's up|whats up|sup)$", q_clean):
+            return (
+                "I'm doing great, thank you! I'm ready to assist you with anything related to "
+                "VVIT University (VVITU), courses, regulations, exams, or campus resources. "
+                "What would you like to know?"
+            )
+
+        # Gratitude
+        if re.search(r"^(thank you|thanks|thanks a lot|thank you so much|thx|appreciate it|cool thanks|ok thanks|okay thanks)$", q_clean):
+            return "You're welcome! Feel free to ask whenever you need any information."
+
+        # Farewells
+        if re.search(r"^(bye|goodbye|see you|see ya|have a good day|talk to you later)$", q_clean):
+            return "Goodbye! Have a great day ahead. Feel free to reach out anytime."
+
+        # Ping / test
+        if re.search(r"^(test|testing|are you there|are you online|ping)$", q_clean):
+            return "VAIT is online and ready to assist you. How can I help you today?"
+
+        return None
+
+    @classmethod
+    def _is_identity_query(cls, query: str) -> bool:
+        """Check if the query is asking about VAIT's identity, name, expansion, or capabilities."""
         q = query.strip().lower().rstrip("?.! ")
         patterns = [
             r"^who are you$",
@@ -341,11 +386,48 @@ class RAGService:
             r"^vait stand for$",
             r"^expand vait$",
             r"^tell me about yourself$",
+            r"^tell me about vait$",
             r"^introduce yourself$",
             r"^what are you$",
             r"^who created you$",
+            r"^what can you do$",
+            r"^what are your capabilities$",
+            r"^how can you help me$",
+            r"^what do you do$",
         ]
         return any(re.search(p, q, re.IGNORECASE) for p in patterns)
+
+    @classmethod
+    def _is_institutional_query(cls, query: str) -> bool:
+        """
+        Determine if the query is specifically about VVIT, VVITU, campus,
+        or institutional operations, rather than general knowledge/coding/casual chat.
+        """
+        q = query.lower()
+
+        # Direct college / institute / university name mentions
+        institutional_names = {
+            "vvit", "vvitu", "vasireddy", "venkatadri", "nambur",
+            "vvitian", "vvitians", "vvitguntur",
+        }
+        if any(re.search(rf"\b{re.escape(name)}\b", q) for name in institutional_names):
+            return True
+
+        # College / campus roles, bodies, facilities, and administration
+        college_entities = [
+            r"\b(principal|vice principal|director|dean|chairman|hod|chancellor|vice chancellor)\b",
+            r"\b(our college|our campus|our university|this college|this campus|this university)\b",
+            r"\b(college|campus|university|institute)\b",
+            r"\b(hostel|mess|canteen|library|bus|transport|bus route|bus fees?)\b",
+            r"\b(fee|fees|fee structure|tuition|scholarship)\b",
+            r"\b(admission|admissions|eamcet|ecet|counseling|counselling|cutoff|intake)\b",
+            r"\b(syllabus|curriculum|regulation|regulations|r20|r23|jntuk|autonomous)\b",
+            r"\b(sac|student activity council|nss|ncc|club|clubs)\b",
+            r"\b(placement|placements|placement cell|highest package|average package|recruiters?)\b",
+            r"\b(attendance|hall ticket|mid exam|semester exam|revaluation|supply exam|backlog)\b",
+            r"\b(academic calendar|class schedule|timetable)\b",
+        ]
+        return any(re.search(pattern, q) for pattern in college_entities)
 
     @staticmethod
     def _detect_query_period(query: str) -> str:
@@ -422,7 +504,7 @@ class RAGService:
     @classmethod
     def _handle_direct_institutional_query(cls, query: str) -> Optional[RAGResponse]:
         """
-        Direct deterministic response handler for core identity and official website questions.
+        Direct deterministic response handler for core identity, official website, and transition questions.
         Guarantees 100% accurate, authoritative institutional era routing with zero hallucination.
         """
         q = query.strip().lower().rstrip("?.! ")
@@ -430,34 +512,20 @@ class RAGService:
         # 1. VAIT Identity Questions
         if cls._is_identity_query(query):
             reply = (
-                "**VAIT Identity**\n\n"
-                "My name is VAIT, which stands for **VVIT's Artificial Intelligence Technology**. "
-                "I am the official institutional AI assistant for **VVIT University (VVITU)** and the legacy **Vasireddy Venkatadri Institute of Technology (VVIT)**.\n\n"
-                "**Institutional Structure & Official Sources:**\n"
-                "• **Current University:** VVIT University (VVITU) — Primary source for current academic programs, administration, calendar, and regulations.\n"
-                "• **Legacy Institute:** Vasireddy Venkatadri Institute of Technology (VVIT) — Historical source for past institutional records.\n"
-                "• **Core Purpose:** Providing authoritative, source-verified information grounded in official institutional documentation.\n\n"
-                "Source(s):\n"
-                "1. VVITU Official Website (Current) — https://vvitu.ac.in/\n"
-                "2. VVIT Legacy Website (Historical) — https://vvitguntur.com/"
+                "I am **VAIT** (**VVIT's Artificial Intelligence Technology**), the official "
+                "institutional AI assistant for **VVIT University (VVITU)** and the legacy **Vasireddy Venkatadri Institute of Technology (VVIT)**.\n\n"
+                "I can assist you with:\n"
+                "• **Academic Regulations & Curriculum:** R20/R23 regulations, syllabus, course structures, and academic calendars.\n"
+                "• **Admissions & Programs:** Degree offerings, eligibility, intake details, and fee structures.\n"
+                "• **Examinations & Results:** Schedules, grading systems, hall tickets, and revaluation procedures.\n"
+                "• **Campus & Facilities:** Infrastructure, hostel guidelines, transport routes, placements, and student activities.\n\n"
+                "How can I help you today?"
             )
             return RAGResponse(
                 reply=reply,
-                sources=["https://vvitu.ac.in/", "https://vvitguntur.com/"],
-                structured_sources=[
-                    {
-                        "title": "VVITU Official Website (Current)",
-                        "url": "https://vvitu.ac.in/",
-                        "type": "website_current",
-                        "period_label": "VVITU Official Website — Current",
-                    },
-                    {
-                        "title": "VVIT Legacy Website (Historical)",
-                        "url": "https://vvitguntur.com/",
-                        "type": "website_historical",
-                        "period_label": "VVIT Legacy Website — Historical",
-                    },
-                ],
+                sources=[],
+                structured_sources=[],
+                source_visibility="none",
                 confidence="High",
                 retrieval_score=1.0,
                 is_refusal=False,
@@ -472,6 +540,7 @@ class RAGService:
             r"^what is the current website\??$",
             r"^what is the official site\??$",
             r"^what is the official website of vvitu\??$",
+            r"^what is the official website of vvit\??$",
             r"^what is the website of vvitu\??$",
             r"^what is vvitu('s)? website\??$",
             r"^current official website\??$",
@@ -485,16 +554,11 @@ class RAGService:
                 "**Current Official Website**\n\n"
                 "The current official website of **VVIT University (VVITU)** is:\n"
                 "**https://vvitu.ac.in/**\n\n"
-                "**Institutional Context:**\n"
-                "• **Current University (VVITU):** https://vvitu.ac.in/ is the primary and authoritative portal for all current university affairs, admissions, active academic calendars, examinations, and official notices.\n"
-                "• **Legacy Institute (VVIT):** The former institute portal (https://vvitguntur.com/) is preserved as a historical and legacy reference for older institutional records. It is not the current website of VVITU.\n\n"
-                "Source(s):\n"
-                "1. VVITU Official Website (Current) — https://vvitu.ac.in/\n"
-                "2. VVIT Legacy Website (Historical) — https://vvitguntur.com/"
+                "This is the primary and authoritative portal for all current university affairs, admissions, active academic calendars, examinations, and official notices."
             )
             return RAGResponse(
                 reply=reply,
-                sources=["https://vvitu.ac.in/", "https://vvitguntur.com/"],
+                sources=["https://vvitu.ac.in/"],
                 structured_sources=[
                     {
                         "title": "VVITU Official Website (Current)",
@@ -502,13 +566,8 @@ class RAGService:
                         "type": "website_current",
                         "period_label": "VVITU Official Website — Current",
                     },
-                    {
-                        "title": "VVIT Legacy Website (Historical)",
-                        "url": "https://vvitguntur.com/",
-                        "type": "website_historical",
-                        "period_label": "VVIT Legacy Website — Historical",
-                    },
                 ],
+                source_visibility="compact",
                 confidence="High",
                 retrieval_score=1.0,
                 is_refusal=False,
@@ -536,16 +595,12 @@ class RAGService:
                 "**Legacy VVIT Website**\n\n"
                 "The legacy website for **Vasireddy Venkatadri Institute of Technology (VVIT)** is:\n"
                 "**https://vvitguntur.com/**\n\n"
-                "**Institutional Period Details:**\n"
-                "• **Legacy VVIT Institute:** https://vvitguntur.com/ reflects the older VVIT institute era, containing archival academic information, historical records, and earlier regulations.\n"
-                "• **Current University (VVITU):** The institution has transitioned to university status as VVIT University (VVITU). The current official portal is **https://vvitu.ac.in/**.\n\n"
-                "Source(s):\n"
-                "1. VVIT Legacy Website (Historical) — https://vvitguntur.com/\n"
-                "2. VVITU Official Website (Current) — https://vvitu.ac.in/"
+                "This portal represents the older VVIT institute period and serves as a historical reference for older academic records and regulations. "
+                "For current university information, please refer to the official VVITU portal at **https://vvitu.ac.in/**."
             )
             return RAGResponse(
                 reply=reply,
-                sources=["https://vvitguntur.com/", "https://vvitu.ac.in/"],
+                sources=["https://vvitguntur.com/"],
                 structured_sources=[
                     {
                         "title": "VVIT Legacy Website (Historical)",
@@ -553,18 +608,60 @@ class RAGService:
                         "type": "website_historical",
                         "period_label": "VVIT Legacy Website — Historical",
                     },
+                ],
+                source_visibility="compact",
+                confidence="High",
+                retrieval_score=1.0,
+                is_refusal=False,
+                intent="general",
+                response_type="factual",
+            )
+
+        # 4. Institutional Transition / Evolution Questions
+        transition_patterns = [
+            r"why did vvit become vvitu",
+            r"how did vvit become vvitu",
+            r"transition from vvit to vvitu",
+            r"difference between vvit and vvitu",
+            r"compare old vvit and current vvitu",
+            r"compare vvit and vvitu",
+            r"is vvit now vvitu",
+            r"did vvit change to vvitu",
+            r"vvit to vvitu transition",
+            r"history of vvit and vvitu",
+        ]
+        if any(re.search(p, q, re.IGNORECASE) for p in transition_patterns):
+            reply = (
+                "**Institutional Evolution: VVIT to VVIT University (VVITU)**\n\n"
+                "**Vasireddy Venkatadri Institute of Technology (VVIT)** was established in 2007 as an engineering college affiliated with JNTUK in Nambur, Guntur, later attaining autonomous status.\n\n"
+                "Recognizing its academic excellence, infrastructure, and research achievements, the institution transitioned into a full-fledged State Private University named **VVIT University (VVITU)** under the Andhra Pradesh Private Universities Act.\n\n"
+                "**Dual Source Reference:**\n"
+                "• **Current University (VVITU):** https://vvitu.ac.in/ — Primary official source for current academic programs, degree awards, university administration, and ongoing regulations.\n"
+                "• **Legacy Institute (VVIT):** https://vvitguntur.com/ — Historical reference for archival academic records, pre-transition regulations, and past institutional history."
+            )
+            return RAGResponse(
+                reply=reply,
+                sources=["https://vvitu.ac.in/", "https://vvitguntur.com/"],
+                structured_sources=[
                     {
                         "title": "VVITU Official Website (Current)",
                         "url": "https://vvitu.ac.in/",
                         "type": "website_current",
                         "period_label": "VVITU Official Website — Current",
                     },
+                    {
+                        "title": "VVIT Legacy Website (Historical)",
+                        "url": "https://vvitguntur.com/",
+                        "type": "website_historical",
+                        "period_label": "VVIT Legacy Website — Historical",
+                    },
                 ],
+                source_visibility="full",
                 confidence="High",
                 retrieval_score=1.0,
                 is_refusal=False,
                 intent="general",
-                response_type="factual",
+                response_type="current_historical",
             )
 
         return None
@@ -691,6 +788,23 @@ class RAGService:
                 cached.performance["cache_hit"] = True
             return cached
 
+        # ── Conversational / Greeting Handler ────────────────────────
+        conv_reply = self._is_conversational_query(message)
+        if conv_reply is not None:
+            resp = RAGResponse(
+                reply=conv_reply,
+                sources=[],
+                structured_sources=[],
+                source_visibility="none",
+                confidence="High",
+                retrieval_score=1.0,
+                is_refusal=False,
+                intent="general",
+                response_type="simple",
+            )
+            self._cache_put(message, resp)
+            return resp
+
         # ── Direct Institutional / Website / Identity Handler ────────
         direct_resp = self._handle_direct_institutional_query(message)
         if direct_resp is not None:
@@ -701,6 +815,7 @@ class RAGService:
         intent, matched_keywords = self.classify_intent(message)
         logger.debug("Intent: %s (keywords: %s)", intent, matched_keywords)
         query_period = self._detect_query_period(message)
+        is_institutional = self._is_institutional_query(message)
         response_plan = response_planner.plan_response(message, intent=intent, period=query_period)
 
         # ── Check index readiness ────────────────────────────────────
@@ -767,6 +882,7 @@ class RAGService:
             context = self._build_context(qualified)
             sources = list(dict.fromkeys(c.document_name for c in qualified))
             structured_sources = self._build_structured_sources(qualified)
+            source_visibility = "compact" if len(structured_sources) <= 1 else "full"
             final_prompt = self._build_generation_prompt(
                 context=context,
                 query=message,
@@ -777,12 +893,20 @@ class RAGService:
             confidence = self._compute_confidence_adjusted(top_adjusted)
         else:
             context = ""
-            sources, structured_sources = self._get_fallback_sources_for_query(message)
+            if is_institutional:
+                sources, structured_sources = self._get_fallback_sources_for_query(message)
+                source_visibility = "compact" if len(structured_sources) <= 1 else "full"
+                confidence = "Low"
+            else:
+                sources, structured_sources = [], []
+                source_visibility = "none"
+                confidence = "High"
+
             final_prompt = self._build_llm_only_prompt(
                 query=message,
                 formatting_instructions=response_plan.formatting_instructions,
+                is_institutional=is_institutional,
             )
-            confidence = "Low"
 
         # ── Generate response ────────────────────────────────────────
         try:
@@ -805,6 +929,7 @@ class RAGService:
                 retrieval_score=0.0,
                 is_refusal=True,
                 response_type="no_answer",
+                source_visibility="none",
             )
         except Exception as exc:
             logger.error("LLM generation failed: %s", exc)
@@ -815,7 +940,7 @@ class RAGService:
 
         # ── HALLUCINATION DEFENSE ────────────────────────────────────
         response_text, confidence = self._hallucination_guard(
-            response_text, confidence, sources,
+            response_text, confidence, sources, is_institutional=is_institutional,
         )
 
         # ── RESPONSE POLISH MODE ─────────────────────────────────────
@@ -824,7 +949,7 @@ class RAGService:
         # ── CITATION FORMATTER — append sources block for rich answers ──
         if response_plan.response_type not in {"simple"}:
             response_text = self._append_citations(
-                response_text, structured_sources,
+                response_text, structured_sources, source_visibility=source_visibility,
             )
 
         t_total = time.perf_counter() - t_start
@@ -852,6 +977,7 @@ class RAGService:
             performance=perf,
             intent=intent,
             response_type=response_plan.response_type,
+            source_visibility=source_visibility,
         )
 
         # ── Store in cache ───────────────────────────────────────────
@@ -889,15 +1015,25 @@ class RAGService:
             yield f'data: {json.dumps({"type": "error", "error": "Your query exceeds the maximum length."})}\n\n'
             return
 
+        # ── Conversational / Greeting Handler ────────────────────────
+        conv_reply = self._is_conversational_query(message)
+        if conv_reply is not None:
+            yield f'data: {json.dumps({"type": "metadata", "sources": [], "structured_sources": [], "source_visibility": "none", "confidence": "High", "retrieval_score": 1.0, "intent": "general", "response_type": "simple"})}\n\n'
+            yield f'data: {json.dumps({"type": "token", "content": conv_reply})}\n\n'
+            yield f'data: {json.dumps({"type": "done", "reply": conv_reply, "sources": [], "structured_sources": [], "source_visibility": "none", "confidence": "High", "response_type": "simple"})}\n\n'
+            return
+
         # ── Direct Institutional / Website / Identity Handler ────────
         direct_resp = self._handle_direct_institutional_query(message)
         if direct_resp is not None:
+            yield f'data: {json.dumps({"type": "metadata", "sources": direct_resp.sources, "structured_sources": direct_resp.structured_sources, "source_visibility": direct_resp.source_visibility, "confidence": direct_resp.confidence, "retrieval_score": 1.0, "intent": direct_resp.intent, "response_type": direct_resp.response_type})}\n\n'
             yield f'data: {json.dumps({"type": "token", "content": direct_resp.reply})}\n\n'
-            yield f'data: {json.dumps({"type": "done", "reply": direct_resp.reply, "sources": direct_resp.sources, "structured_sources": direct_resp.structured_sources, "confidence": direct_resp.confidence, "response_type": direct_resp.response_type})}\n\n'
+            yield f'data: {json.dumps({"type": "done", "reply": direct_resp.reply, "sources": direct_resp.sources, "structured_sources": direct_resp.structured_sources, "source_visibility": direct_resp.source_visibility, "confidence": direct_resp.confidence, "response_type": direct_resp.response_type})}\n\n'
             return
 
         intent, matched_keywords = self.classify_intent(message)
         query_period = self._detect_query_period(message)
+        is_institutional = self._is_institutional_query(message)
         response_plan = response_planner.plan_response(message, intent=intent, period=query_period)
 
         retrieval_empty = False
@@ -947,6 +1083,7 @@ class RAGService:
             context = self._build_context(qualified)
             sources = list(dict.fromkeys(c.document_name for c in qualified))
             structured_sources = self._build_structured_sources(qualified)
+            source_visibility = "compact" if len(structured_sources) <= 1 else "full"
             final_prompt = self._build_generation_prompt(
                 context=context,
                 query=message,
@@ -955,15 +1092,23 @@ class RAGService:
             confidence = self._compute_confidence_adjusted(top_adjusted)
         else:
             context = ""
-            sources, structured_sources = self._get_fallback_sources_for_query(message)
+            if is_institutional:
+                sources, structured_sources = self._get_fallback_sources_for_query(message)
+                source_visibility = "compact" if len(structured_sources) <= 1 else "full"
+                confidence = "Low"
+            else:
+                sources, structured_sources = [], []
+                source_visibility = "none"
+                confidence = "High"
+
             final_prompt = self._build_llm_only_prompt(
                 query=message,
                 formatting_instructions=response_plan.formatting_instructions,
+                is_institutional=is_institutional,
             )
-            confidence = "Low"
 
         # Yield metadata first
-        yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "confidence": confidence, "retrieval_score": round(top_adjusted, 4), "intent": intent, "response_type": response_plan.response_type})}\n\n'
+        yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "source_visibility": source_visibility, "confidence": confidence, "retrieval_score": round(top_adjusted, 4), "intent": intent, "response_type": response_plan.response_type})}\n\n'
 
         try:
             async for chunk in self.llm_service.generate_stream(
@@ -989,7 +1134,7 @@ class RAGService:
             top_adjusted_score=top_adjusted,
         )
 
-        yield f'data: {json.dumps({"type": "done", "response_type": response_plan.response_type})}\n\n'
+        yield f'data: {json.dumps({"type": "done", "response_type": response_plan.response_type, "source_visibility": source_visibility, "sources": sources, "structured_sources": structured_sources, "confidence": confidence})}\n\n'
 
     async def _bootstrap_official_sites_if_empty(self) -> bool:
         """
@@ -1496,8 +1641,24 @@ class RAGService:
         )
 
     @staticmethod
-    def _build_llm_only_prompt(query: str, formatting_instructions: str = "") -> str:
+    def _build_llm_only_prompt(query: str, formatting_instructions: str = "", is_institutional: bool = True) -> str:
         """Build the final user prompt payload when no context is available."""
+        if not is_institutional:
+            format_block = (
+                f"\n\nDYNAMIC FORMATTING DIRECTIVE:\n{formatting_instructions}"
+                if formatting_instructions
+                else "\nKeep the response clear, helpful, educational, and cleanly structured."
+            )
+            return (
+                "USER QUESTION:\n"
+                f"{query}\n\n"
+                "INSTRUCTIONS:\n"
+                "1. Answer the user's question directly, accurately, and thoroughly based on your knowledge.\n"
+                "2. Maintain a natural, helpful, and polite tone.\n"
+                "3. Do NOT mention VVIT, VVITU, university transitions, or institutional website links unless the question explicitly asks about them."
+                f"{format_block}"
+            )
+
         format_block = (
             f"\n\nDYNAMIC FORMATTING DIRECTIVE:\n{formatting_instructions}"
             if formatting_instructions
@@ -1513,7 +1674,8 @@ class RAGService:
             "   - VAIT stands for VVIT's Artificial Intelligence Technology.\n"
             "2. If asked about the current official website, cite https://vvitu.ac.in/.\n"
             "3. If asked about the old VVIT website, cite https://vvitguntur.com/.\n"
-            "4. For current matters, prioritize VVITU. For historical matters, use legacy VVIT."
+            "4. For current matters, prioritize VVITU. For historical matters, use legacy VVIT.\n"
+            "5. Only mention the institutional transition when relevant to the question."
             f"{format_block}"
         )
 
@@ -1545,12 +1707,13 @@ class RAGService:
         performance: Optional[Dict] = None,
         intent: str = "general",
         response_type: str = "informational",
+        source_visibility: str = "none",
     ) -> RAGResponse:
         """
         Post-process LLM output into a structured RAGResponse.
 
         - Trims trailing whitespace
-        - Attaches unique sources, structured_sources, confidence, retrieval_score, performance, response_type
+        - Attaches unique sources, structured_sources, confidence, retrieval_score, performance, response_type, source_visibility
         """
         cleaned = text.rstrip() if text else ""
         return RAGResponse(
@@ -1564,6 +1727,7 @@ class RAGService:
             performance=performance,
             intent=intent,
             response_type=response_type,
+            source_visibility=source_visibility,
         )
 
     @staticmethod
@@ -1571,16 +1735,17 @@ class RAGService:
         response_text: str,
         confidence: str,
         sources: List[str],
+        is_institutional: bool = True,
     ) -> Tuple[str, str]:
         """Post-LLM hallucination defence: reject only empty / too-short responses."""
-        if not response_text or len(response_text.strip()) < MIN_VALID_RESPONSE_LENGTH:
+        if not response_text or len(response_text.strip()) < 10:
             logger.warning(
                 "Hallucination guard: response too short (%d chars)",
                 len(response_text.strip()) if response_text else 0,
             )
             return "I apologize, but I could not generate a proper response. Please try again.", "Low"
 
-        if not sources:
+        if is_institutional and not sources:
             confidence = "Low"
 
         return response_text, confidence
@@ -1589,27 +1754,22 @@ class RAGService:
     def _append_citations(
         response_text: str,
         structured_sources: List[Dict],
+        source_visibility: str = "none",
     ) -> str:
         """
-        Append a formatted citation block at the bottom of the reply.
-
-        Format:
-            Source(s):
-            1. Title [VVITU Official Website — Current] — URL
-            2. Title [VVIT Legacy Website — Historical] — URL
-
-        Clickable, frontend-ready.
+        Append a formatted citation block at the bottom of the reply only when source_visibility != "none".
+        Always strips any accidental LLM-generated source block when source_visibility == "none".
         """
-        if not structured_sources:
-            return response_text
-
-        # Strip any existing source block the LLM may have added.
+        # Always strip any existing source block the LLM may have added
         cleaned = re.sub(
             r"\n*Source(?:\(s\))?s?:\s*\n(?:\d+\..*\n?)*",
             "",
             response_text,
             flags=re.IGNORECASE,
         ).rstrip()
+
+        if source_visibility == "none" or not structured_sources:
+            return cleaned
 
         lines = ["\n\nSource(s):"]
         for i, src in enumerate(structured_sources, 1):

@@ -50,6 +50,7 @@ def _serialize_message(message: dict[str, Any]) -> dict[str, Any]:
         "timestamp": _iso(message.get("timestamp")),
         "sources": message.get("sources", []),
         "structured_sources": message.get("structured_sources", []),
+        "source_visibility": message.get("source_visibility", "none"),
         "confidence": message.get("confidence"),
         "category": message.get("category"),
         "retrieval_score": message.get("retrieval_score", 0.0),
@@ -125,6 +126,7 @@ async def record_chat_exchange(
     department: str | None = None,
     academic_year: str | None = None,
     performance: dict[str, Any] | None = None,
+    source_visibility: str = "none",
 ) -> dict[str, Any]:
     """Append a user/assistant exchange and update per-user usage counters."""
 
@@ -143,6 +145,7 @@ async def record_chat_exchange(
             "confidence": confidence,
             "sources": _source_titles(structured_sources, sources),
             "structured_sources": structured_sources or [],
+            "source_visibility": source_visibility,
             "department": department,
             "academic_year": academic_year,
             "message_count": 0,
@@ -176,6 +179,7 @@ async def record_chat_exchange(
         "timestamp": now,
         "sources": _source_titles(structured_sources, sources),
         "structured_sources": structured_sources or [],
+        "source_visibility": source_visibility,
         "confidence": confidence,
         "category": intent or "general",
         "retrieval_score": retrieval_score,
@@ -187,6 +191,7 @@ async def record_chat_exchange(
         "confidence": confidence,
         "sources": _source_titles(structured_sources, sources),
         "structured_sources": structured_sources or [],
+        "source_visibility": source_visibility,
         "department": department,
         "academic_year": academic_year,
         "updated_at": now,

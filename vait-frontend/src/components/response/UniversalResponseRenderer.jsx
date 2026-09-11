@@ -106,6 +106,7 @@ export default function UniversalResponseRenderer({ message }) {
   const text = message.text || '';
   const isGenerating = message.isGenerating;
   const explicitType = message.responseType || message.response_type;
+  const sourceVisibility = message.source_visibility || message.sourceVisibility || 'none';
 
   const format = useMemo(() => detectFormat(text, explicitType), [text, explicitType]);
   const heroFact = useMemo(() => (format === 'factual' ? parseHeroFact(text) : null), [format, text]);
@@ -143,7 +144,7 @@ export default function UniversalResponseRenderer({ message }) {
     []
   );
 
-  const isCompact = format === 'simple';
+  const isCompact = sourceVisibility === 'compact' || format === 'simple';
   const densityClass =
     text.length > 800 ? 'density-expanded' : text.length > 300 ? 'density-medium' : 'density-compact';
 
@@ -171,14 +172,17 @@ export default function UniversalResponseRenderer({ message }) {
       </div>
 
       {/* 4. Adaptive Sources & Confidence Footer */}
-      <div className="vait-response-footer">
-        <AdaptiveSources
-          sources={message.sources}
-          structuredSources={message.structuredSources || message.structured_sources}
-          isCompact={isCompact}
-        />
-        <AdaptiveConfidence level={message.confidence} isRefusal={message.is_refusal} />
-      </div>
+      {sourceVisibility !== 'none' && (
+        <div className="vait-response-footer">
+          <AdaptiveSources
+            sources={message.sources}
+            structuredSources={message.structuredSources || message.structured_sources}
+            isCompact={isCompact}
+            sourceVisibility={sourceVisibility}
+          />
+          <AdaptiveConfidence level={message.confidence} isRefusal={message.is_refusal} />
+        </div>
+      )}
     </div>
   );
 }

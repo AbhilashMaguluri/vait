@@ -27,6 +27,7 @@ class ChatResult:
     performance: Optional[Dict] = None
     intent: str = "general"
     response_type: str = "informational"
+    source_visibility: str = "none"
 
 
 class ChatController:
@@ -53,6 +54,7 @@ class ChatController:
                 confidence="Low",
                 retrieval_score=0.0,
                 is_refusal=True,
+                source_visibility="none",
             )
 
         try:
@@ -69,6 +71,7 @@ class ChatController:
                 confidence="Low",
                 retrieval_score=0.0,
                 is_refusal=True,
+                source_visibility="none",
             )
 
         return ChatResult(
@@ -81,6 +84,7 @@ class ChatController:
             performance=response.performance,
             intent=response.intent,
             response_type=getattr(response, "response_type", "informational"),
+            source_visibility=getattr(response, "source_visibility", "none"),
         )
 
     async def process_message_stream(

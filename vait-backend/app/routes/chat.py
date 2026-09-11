@@ -73,6 +73,10 @@ class ChatResponse(BaseModel):
         "Low",
         description="Confidence level: High, Medium, or Low",
     )
+    source_visibility: str = Field(
+        "none",
+        description="Source visibility tier: none, compact, full",
+    )
     retrieval_score: float = Field(
         0.0,
         description="Top similarity score from retrieval",
@@ -156,6 +160,7 @@ async def _persist_chat_response(database, current_user: dict, request: ChatRequ
             department=request.department,
             academic_year=request.academic_year,
             performance=response.performance,
+            source_visibility=getattr(response, "source_visibility", "none"),
         )
         await log_activity(
             database,
@@ -218,6 +223,7 @@ async def chat(
                 SourceItem(**s) for s in (response.structured_sources or [])
             ],
             confidence=response.confidence,
+            source_visibility=getattr(response, "source_visibility", "none"),
             retrieval_score=response.retrieval_score,
             intent=response.intent,
             response_type=getattr(response, "response_type", "informational"),
@@ -250,6 +256,7 @@ async def chat_stream(
         metadata: dict = {
             "sources": [],
             "structured_sources": [],
+            "source_visibility": "none",
             "confidence": "Low",
             "retrieval_score": 0.0,
             "intent": "general",
@@ -291,6 +298,7 @@ async def chat_stream(
                         retrieval_score=float(metadata.get("retrieval_score", 0.0) or 0.0),
                         department=request.department,
                         academic_year=request.academic_year,
+                        source_visibility=metadata.get("source_visibility", "none"),
                     )
                     await log_activity(
                         database,
