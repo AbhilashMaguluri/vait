@@ -137,7 +137,7 @@ class Settings(BaseSettings):
     embedding_dimension: int = 1536
 
     openai_model: str = "gpt-4o-mini"
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
     openrouter_model: str = "meta-llama/llama-3.1-8b-instruct"
     nvidia_model: str = "meta/llama-3.1-70b-instruct"
     groq_chat_completions_url: str = "https://api.groq.com/openai/v1/chat/completions"
@@ -149,7 +149,7 @@ class Settings(BaseSettings):
     embeddings_timeout_seconds: float = 20.0
 
     default_llm_provider: str = "groq"
-    default_llm_model: str = "llama-3.3-70b-versatile"
+    default_llm_model: str = "openai/gpt-oss-120b"
     default_temperature: float = 0.3
     default_max_tokens: int = 800
 

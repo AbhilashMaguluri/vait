@@ -24,8 +24,8 @@ VAIT is an institutional AI assistant that provides accurate information exclusi
 | Language | Python 3.10+ |
 | API Framework | FastAPI |
 | Vector Store | **FAISS** (THE PRIMARY DATABASE) |
-| Embeddings | OpenRouter nomic-ai/nomic-embed-text-v1.5 (768 dimensions) |
-| LLM | Groq llama3-70b-8192 (primary) + OpenRouter mistralai/mistral-7b-instruct (fallback) |
+| Embeddings | OpenRouter openai/text-embedding-3-small (1536 dimensions) |
+| LLM | Groq openai/gpt-oss-120b (primary) + OpenRouter meta-llama/llama-3.1-8b-instruct (fallback) |
 
 **Explicitly NOT used for vector/database:** JavaScript, Node.js, ChromaDB, Pinecone
 
@@ -139,14 +139,14 @@ Create a `.env` file in `vait-backend/`:
 ```env
 # Groq primary LLM configuration
 GROQ_API_KEY=your_api_key_here
-GROQ_MODEL=llama3-70b-8192
+GROQ_MODEL=openai/gpt-oss-120b
 GROQ_CHAT_COMPLETIONS_URL=https://api.groq.com/openai/v1/chat/completions
 
 # OpenRouter fallback LLM + embeddings
 OPENROUTER_API_KEY=your_openrouter_key_here
-OPENROUTER_MODEL=mistralai/mistral-7b-instruct
+OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct
 OPENROUTER_CHAT_COMPLETIONS_URL=https://openrouter.ai/api/v1/chat/completions
-EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5
+EMBEDDING_MODEL=openai/text-embedding-3-small
 OPENROUTER_EMBEDDINGS_URL=https://openrouter.ai/api/v1/embeddings
 DEBUG=false
 ```
@@ -285,7 +285,7 @@ POST /api/vait/chat
      ↓
 6. Build grounded prompt
      ↓
-7. Call LLM (Groq llama3-70b-8192, fallback to OpenRouter mistralai/mistral-7b-instruct)
+7. Call LLM (Groq openai/gpt-oss-120b, fallback to OpenRouter meta-llama/llama-3.1-8b-instruct)
      ↓
 8. Hallucination guard + response polish
      ↓

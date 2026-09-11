@@ -34,7 +34,7 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
 | **Uvicorn** | 0.27.1 | ASGI server |
 | **Pydantic** | 2.6.1 | Data validation & settings |
 | **FAISS (faiss-cpu)** | 1.7.4 | Vector similarity search |
-| **Groq API** | External | Primary LLM inference (llama3-70b-8192) |
+| **Groq API** | External | Primary LLM inference (openai/gpt-oss-120b) |
 | **OpenRouter API** | External | Fallback LLM inference + embeddings |
 | **NumPy** | 1.26.4 | Numerical operations |
 | **PyPDF2** | 3.0.1 | PDF text extraction |
@@ -170,7 +170,7 @@ The complete 19-step retrieval and generation flow:
 10. Near-duplicate removal → Jaccard overlap > 0.90 → discard lower
 11. Adjacent chunk merging → Merge contiguous same-document chunks
 12. Context cap → Top 4 chunks, max 8000 characters
-13. LLM generation → Groq llama3-70b-8192 with OpenRouter fallback
+13. LLM generation → Groq openai/gpt-oss-120b with OpenRouter fallback
 14. Hallucination guard → Post-generation validation
 15. Answer structure enforcement → Title, explanation, bullets, sources
 16. Response polish → Clean spacing, dedup sentences, 600-word cap
@@ -385,10 +385,10 @@ Key settings managed via `.env` + Pydantic Settings:
 
 | Setting | Default | Description |
 |---|---|---|
-| LLM Primary Model | `llama3-70b-8192` | Groq generation model |
-| LLM Fallback Model | `mistralai/mistral-7b-instruct` | OpenRouter fallback model |
-| Embedding Model | `nomic-ai/nomic-embed-text-v1.5` | OpenRouter embedding model (768-dim) |
-| Embedding Dimensions | `768` | Vector dimensions |
+| LLM Primary Model | `openai/gpt-oss-120b` | Groq generation model |
+| LLM Fallback Model | `meta-llama/llama-3.1-8b-instruct` | OpenRouter fallback model |
+| Embedding Model | `openai/text-embedding-3-small` | OpenRouter embedding model (1536-dim) |
+| Embedding Dimensions | `1536` | Vector dimensions |
 | Similarity Threshold | `0.65` | Minimum retrieval score |
 | Adjusted Threshold | `0.55` | Minimum authority-weighted score |
 | Context Cap | `8000` chars | Maximum context for LLM |

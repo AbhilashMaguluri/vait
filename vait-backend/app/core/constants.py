@@ -18,7 +18,7 @@ KNOWLEDGE_BASE_SETTINGS_KEY = "knowledge_base"
 
 DEFAULT_AI_SETTINGS = {
     "provider": "groq",
-    "model": "llama3-70b-8192",
+    "model": "openai/gpt-oss-120b",
     "temperature": 0.3,
     "max_tokens": 800,
 }

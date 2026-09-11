@@ -24,6 +24,7 @@ VALIDATION RULES:
 	"Based on available VVIT sources, this information is not clearly specified."
 4. If sources conflict, prefer:
 	official websites > LinkedIn > other sources.
+5. Do not invoke or call external tools or functions. Output your response as direct text only.
 
 INTENT ROUTING:
 - Admissions, academics, departments, courses: prioritize official websites.
