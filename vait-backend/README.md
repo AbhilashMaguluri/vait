@@ -1,6 +1,6 @@
 # VAIT Backend
 
-**Virtual Academic Intelligence Terminal** - Official University Intelligence Assistant
+**VAIT — VVIT's Artificial Intelligence Technology**
 
 A strict RAG-based AI system that prioritizes **correctness, authority, and refusal over answering**.
 

@@ -1,4 +1,4 @@
-# 🎓 VAIT — Virtual Academic Intelligence Terminal
+# 🎓 VAIT — VVIT's Artificial Intelligence Technology
 
 > **"We Never Let You Wait for Anything."**
 

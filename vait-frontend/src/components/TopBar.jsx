@@ -22,7 +22,7 @@ export default function TopBar() {
     <header className="topbar">
       <div className="topbar-left">
         <h1 className="topbar-title">VAIT</h1>
-        <span className="topbar-subtitle">VVIT's Official Intelligence Assistant</span>
+        <span className="topbar-subtitle">VVIT's Artificial Intelligence Technology</span>
       </div>
 
       <div className="topbar-center">

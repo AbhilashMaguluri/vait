@@ -24,7 +24,7 @@
 
 ### What is VAIT?
 
-**VAIT** (Virtual Academic Intelligence Terminal) is a Retrieval-Augmented Generation (RAG) system built for **Vasireddy Venkatadri International Technology (VVIT)**. It provides students and staff with authoritative, source-cited answers to institutional queries — academic calendars, regulations, syllabi, notices, and departmental information.
+**VAIT** (VVIT's Artificial Intelligence Technology) is a Retrieval-Augmented Generation (RAG) system built for **Vasireddy Venkatadri Institute of Technology (VVIT)**. It provides students and staff with authoritative, source-cited answers to institutional queries — academic calendars, regulations, syllabi, notices, and departmental information.
 
 VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowledge retrieval system** that refuses to answer when context is insufficient, never guesses, and never fabricates information.
 

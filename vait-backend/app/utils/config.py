@@ -92,7 +92,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "VAIT - Institutional University AI Assistant"
+    app_name: str = "VAIT — VVIT's Artificial Intelligence Technology"
     app_version: str = "2.0.0"
     debug: bool = False
     node_env: str = Field(default="development", alias="NODE_ENV")

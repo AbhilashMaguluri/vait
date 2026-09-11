@@ -144,7 +144,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
-        description="Official institutional university AI assistant with strict RAG-based responses",
+        description="VAIT — VVIT's Artificial Intelligence Technology with strict RAG-based responses",
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc"
@@ -191,7 +191,7 @@ def create_app() -> FastAPI:
         db_ok = is_db_connected()
         overall_status = "operational" if (rag_service is not None and db_ok) else "degraded"
         base = {
-            "service": "VAIT — Institutional University AI Assistant",
+            "service": "VAIT — VVIT's Artificial Intelligence Technology",
             "version": settings.app_version,
             "status": overall_status,
             "database": {

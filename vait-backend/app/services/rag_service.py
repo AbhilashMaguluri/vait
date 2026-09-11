@@ -317,6 +317,28 @@ class RAGService:
             self._cache.popitem(last=False)
 
     @staticmethod
+    def _is_identity_query(query: str) -> bool:
+        """Check if the query is asking about VAIT's identity, name, or expansion."""
+        q = query.strip().lower().rstrip("?.! ")
+        patterns = [
+            r"^who are you$",
+            r"^what is your name$",
+            r"^what('s| is) vait$",
+            r"^what does vait stand for$",
+            r"^what is the full form of vait$",
+            r"^what is the full name of vait$",
+            r"^what is the meaning of vait$",
+            r"^what is vait stand for$",
+            r"^vait stand for$",
+            r"^expand vait$",
+            r"^tell me about yourself$",
+            r"^introduce yourself$",
+            r"^what are you$",
+            r"^who created you$",
+        ]
+        return any(re.search(p, q, re.IGNORECASE) for p in patterns)
+
+    @staticmethod
     def _is_dynamic_query(query: str) -> bool:
         """Return True when a query asks for latest/current updates."""
         q = query.lower()
@@ -429,6 +451,36 @@ class RAGService:
             if cached.performance:
                 cached.performance["cache_hit"] = True
             return cached
+
+        # ── Check Identity Query ─────────────────────────────────────
+        if self._is_identity_query(message):
+            reply = (
+                "**VAIT Identity**\n\n"
+                "My name is VAIT, which stands for VVIT's Artificial Intelligence Technology. "
+                "I am the official institutional AI assistant for Vasireddy Venkatadri Institute of Technology (VVIT) and VVIT University (VVITU).\n\n"
+                "**Key Information:**\n"
+                "• **Full Name:** VVIT's Artificial Intelligence Technology\n"
+                "• **Institution:** Vasireddy Venkatadri Institute of Technology (VVIT)\n"
+                "• **Role:** Institutional academic, examinations, admissions, and campus intelligence assistant\n"
+                "• **Verification:** Answers are strictly grounded in verified institutional records and official documents\n\n"
+                "Source(s):\n"
+                "1. VVIT Official Portal — https://www.vvitguntur.com/"
+            )
+            response = RAGResponse(
+                reply=reply,
+                sources=["https://www.vvitguntur.com/"],
+                structured_sources=[{
+                    "title": "VVIT Official Portal",
+                    "url": "https://www.vvitguntur.com/",
+                    "type": "website",
+                }],
+                confidence="High",
+                retrieval_score=1.0,
+                is_refusal=False,
+                intent="general",
+            )
+            self._cache_put(message, response)
+            return response
 
         # ── Classify intent ──────────────────────────────────────────
         intent, matched_keywords = self.classify_intent(message)
@@ -1151,8 +1203,9 @@ class RAGService:
             "USER QUESTION:\n"
             f"{query}\n\n"
             "INSTRUCTIONS:\n"
-            "1. Answer the user's question directly based on your training data.\n"
-            "2. Keep the response concise, student-friendly, and cleanly structured."
+            "1. Answer the user's question directly based on your knowledge and core identity.\n"
+            "2. If asked about your identity or what VAIT stands for, always identify yourself as: 'My name is VAIT, which stands for VVIT\\'s Artificial Intelligence Technology.'\n"
+            "3. Keep the response concise, student-friendly, and cleanly structured."
         )
 
     @staticmethod
@@ -1471,8 +1524,13 @@ class RAGService:
             return prompt_path.read_text(encoding="utf-8")
 
         return (
-            "You are VAIT (Virtual Academic Intelligence Terminal), an institutional AI "
-            "assistant for Vasireddy Venkatadri Institute of Technology (VVIT).\n\n"
+            "You are VAIT (VVIT's Artificial Intelligence Technology), the official institutional AI "
+            "assistant for Vasireddy Venkatadri Institute of Technology (VVIT) and VVIT University (VVITU).\n\n"
+            "CORE IDENTITY:\n"
+            "- Your name is VAIT, which stands for VVIT's Artificial Intelligence Technology.\n"
+            "- When asked 'What is your name?', 'Who are you?', 'What does VAIT stand for?', 'What is VAIT?', or 'Tell me about yourself', you must state clearly:\n"
+            "  'My name is VAIT, which stands for VVIT's Artificial Intelligence Technology. I am the official institutional AI assistant for Vasireddy Venkatadri Institute of Technology (VVIT).'\n"
+            "- You must NEVER use or introduce any alternative expansion for VAIT. The only official expansion is 'VVIT's Artificial Intelligence Technology'.\n\n"
             "STRICT RULES:\n"
             "1. Provide helpful AI responses to questions.\n"
             "2. If institutional context is provided, prioritize it in this order: official VVIT/VVITU sources > LinkedIn > social > related web.\n"
@@ -1778,7 +1836,7 @@ class RAGService:
 
         return {
             # Identity
-            "system_name": "VAIT — Institutional University AI Assistant",
+            "system_name": "VAIT — VVIT's Artificial Intelligence Technology",
             "version": self.settings.app_version,
             "engine": "FAISS IndexFlatIP + Groq/OpenRouter RAG Pipeline",
             "status": "operational",
