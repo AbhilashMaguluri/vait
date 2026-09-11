@@ -940,7 +940,6 @@ class RAGService:
             except Exception as exc:
                 logger.warning("Official web fallback retrieval failed: %s", exc)
 
-        # ── CONTEXT OPTIMIZATION & PROMPT PREPARATION ─────────────────
         if official_web_results:
             context = "\n\n".join(r.content for r in official_web_results)
             sources = [r.url for r in official_web_results]
@@ -948,17 +947,28 @@ class RAGService:
             source_visibility = "compact" if len(structured_sources) <= 1 else "full"
             confidence = "High"
             top_adjusted = 0.95
-            final_prompt = self._build_generation_prompt(
-                context=context,
-                query=message,
-                formatting_instructions=(
-                    f"{response_plan.formatting_instructions}\n\n"
+
+            all_direct_urls = all(r.retrieval_method == "direct_url_only" for r in official_web_results)
+            if all_direct_urls:
+                official_directive = (
+                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
+                    "• The relevant official institutional page was identified, but its dynamic client-side content could not be fully extracted.\n"
+                    "• Explain clearly which official page or section exists and provide the direct canonical URL so the user can access it immediately.\n"
+                    "• Do NOT invent details that were not extracted."
+                )
+            else:
+                official_directive = (
                     "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
                     "• The above information was retrieved directly from the official institutional portal.\n"
                     "• Answer the user's question directly, factually, and completely using this verified information.\n"
                     "• Cite key details (e.g. designation, department, qualification, role, portal link).\n"
                     "• NEVER tell the user to visit or search the website for information given above; provide the verified facts directly."
-                ),
+                )
+
+            final_prompt = self._build_generation_prompt(
+                context=context,
+                query=message,
+                formatting_instructions=f"{response_plan.formatting_instructions}\n\n{official_directive}",
             )
         elif not retrieval_empty:
             # 1. Remove near-duplicate chunks
@@ -1212,17 +1222,28 @@ class RAGService:
             source_visibility = "compact" if len(structured_sources) <= 1 else "full"
             confidence = "High"
             top_adjusted = 0.95
-            final_prompt = self._build_generation_prompt(
-                context=context,
-                query=message,
-                formatting_instructions=(
-                    f"{response_plan.formatting_instructions}\n\n"
+
+            all_direct_urls = all(r.retrieval_method == "direct_url_only" for r in official_web_results)
+            if all_direct_urls:
+                official_directive = (
+                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
+                    "• The relevant official institutional page was identified, but its dynamic client-side content could not be fully extracted.\n"
+                    "• Explain clearly which official page or section exists and provide the direct canonical URL so the user can access it immediately.\n"
+                    "• Do NOT invent details that were not extracted."
+                )
+            else:
+                official_directive = (
                     "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
                     "• The above information was retrieved directly from the official institutional portal.\n"
                     "• Answer the user's question directly, factually, and completely using this verified information.\n"
                     "• Cite key details (e.g. designation, department, qualification, role, portal link).\n"
                     "• NEVER tell the user to visit or search the website for information given above; provide the verified facts directly."
-                ),
+                )
+
+            final_prompt = self._build_generation_prompt(
+                context=context,
+                query=message,
+                formatting_instructions=f"{response_plan.formatting_instructions}\n\n{official_directive}",
             )
         elif not retrieval_empty:
             qualified = self._remove_near_duplicates(qualified)

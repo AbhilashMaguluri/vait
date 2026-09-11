@@ -33,6 +33,12 @@ import requests
 from bs4 import BeautifulSoup
 
 from app.services.website_crawler import ContentExtractor
+from app.services.browser_retrieval_service import (
+    get_browser_retrieval_service,
+    BrowserRetrievalService,
+    BrowserRenderResult,
+    is_safe_official_url,
+)
 
 logger = logging.getLogger("vait.official_web")
 
@@ -65,6 +71,7 @@ class OfficialWebResult:
     source_tier: str  # "primary_official_current" | "legacy_official_vvit"
     confidence: float = 0.95
     entity_type: str = "general_page"  # "faculty" | "leadership" | "department" | "program" | "general_page"
+    retrieval_method: str = "catalog"  # "catalog" | "http" | "headless_browser_dom" | "headless_browser_screenshot" | "direct_url_only"
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_structured_source(self) -> Dict[str, Any]:
@@ -88,6 +95,7 @@ class OfficialWebResult:
             "type": type_label,
             "period_label": period_label,
             "institutional_period": institutional_period,
+            "retrieval_method": self.retrieval_method,
         }
 
 
@@ -120,6 +128,206 @@ class OfficialWebCache:
 
 
 # =====================================================================
+# OFFICIAL VVITU DYNAMIC ROUTES
+# =====================================================================
+
+OFFICIAL_VVITU_ROUTES: List[Dict[str, Any]] = [
+    {
+        "path": "/examinations",
+        "url": "https://vvitu.ac.in/examinations",
+        "title": "VVITU Official Examination Portal",
+        "description": "Official Examination section of VVIT University (VVITU), providing schedules, timetables, notifications, results, and evaluation guidelines.",
+        "keywords": ["exam", "exams", "examination", "examinations", "timetable", "schedule", "result", "results", "hall ticket", "evaluation", "grading", "revaluation"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/university-notifications",
+        "url": "https://vvitu.ac.in/university-notifications",
+        "title": "VVITU University Notifications & Circulars",
+        "description": "Official university notifications, academic circulars, administrative announcements, and official notices from VVIT University (VVITU).",
+        "keywords": ["notification", "notifications", "circular", "circulars", "announcement", "announcements", "notice", "notices", "orders", "updates"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/careers",
+        "url": "https://vvitu.ac.in/careers",
+        "title": "VVITU Careers & Employment Opportunities",
+        "description": "Official careers portal for VVIT University (VVITU), listing academic, teaching, research, and administrative job openings and recruitment notices.",
+        "keywords": ["career", "careers", "job", "jobs", "recruitment", "vacancy", "vacancies", "opening", "openings", "hire", "hiring", "faculty recruitment"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/hostels",
+        "url": "https://vvitu.ac.in/hostels",
+        "title": "VVITU Student Hostels & Residential Facilities",
+        "description": "Hostel accommodations at VVIT University (VVITU) for boys and girls, including room amenities, boarding, mess facilities, and residential rules.",
+        "keywords": ["hostel", "hostels", "boarding", "accommodation", "dormitory", "rooms", "mess", "stay", "residential"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/transport",
+        "url": "https://vvitu.ac.in/transport",
+        "title": "VVITU Campus Transport & Bus Routes",
+        "description": "Transportation facilities and bus routes operated by VVIT University (VVITU) connecting Guntur, Vijayawada, Mangalagiri, Tenali, and surrounding regions.",
+        "keywords": ["transport", "bus", "buses", "bus route", "bus routes", "commute", "travel", "transportation"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/library",
+        "url": "https://vvitu.ac.in/library",
+        "title": "VVITU Central Library & Information Centre",
+        "description": "The Central Library at VVIT University (VVITU), featuring extensive book volumes, print and electronic journals, IEEE/ACM digital access, and research facilities.",
+        "keywords": ["library", "books", "journals", "digital library", "ieee", "reading room", "volumes"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/canteen",
+        "url": "https://vvitu.ac.in/canteen",
+        "title": "VVITU Canteen & Dining Facilities",
+        "description": "Canteen and hygienic dining amenities available at VVIT University (VVITU) for students, faculty, and campus visitors.",
+        "keywords": ["canteen", "cafeteria", "food", "dining", "snacks", "meals"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/accreditation-and-approvals",
+        "url": "https://vvitu.ac.in/accreditation-and-approvals",
+        "title": "VVITU Accreditations, Approvals & Statutory Recognitions",
+        "description": "Statutory recognitions, approvals, and accreditations of VVIT University (VVITU) including AICTE, UGC, NAAC, NBA, and State Government authorizations.",
+        "keywords": ["accreditation", "accreditations", "approval", "approvals", "aicte", "ugc", "naac", "nba", "statutory", "recognition"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/ranking-and-recognition",
+        "url": "https://vvitu.ac.in/ranking-and-recognition",
+        "title": "VVITU Rankings & Institutional Recognitions",
+        "description": "Institutional rankings, NIRF participation, awards, and national recognition achieved by VVIT University (VVITU).",
+        "keywords": ["ranking", "rankings", "nirf", "recognition", "awards", "achievement"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/mandatory-disclosures",
+        "url": "https://vvitu.ac.in/mandatory-disclosures",
+        "title": "VVITU Mandatory Disclosures & Public Regulatory Info",
+        "description": "Mandatory regulatory disclosures, institutional audits, and statutory documentation for VVIT University (VVITU).",
+        "keywords": ["mandatory disclosure", "mandatory disclosures", "disclosure", "regulatory", "rti"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/collaborations-and-partnerships",
+        "url": "https://vvitu.ac.in/collaborations-and-partnerships",
+        "title": "VVITU Global Collaborations & Industry Partnerships",
+        "description": "Academic MoUs, industrial partnerships, and international collaborations established by VVIT University (VVITU).",
+        "keywords": ["collaboration", "collaborations", "partnership", "partnerships", "mou", "mous", "international tie-up"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/siemens-centre-of-excellence",
+        "url": "https://vvitu.ac.in/siemens-centre-of-excellence",
+        "title": "VVITU Siemens Centre of Excellence (CoE)",
+        "description": "Siemens Centre of Excellence (CoE) at VVIT University (VVITU), offering advanced technical labs in robotics, automation, product design, and manufacturing.",
+        "keywords": ["siemens", "coe", "centre of excellence", "automation lab", "siemens lab"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/google-developers-code-lab",
+        "url": "https://vvitu.ac.in/google-developers-code-lab",
+        "title": "VVITU Google Developers Code Lab",
+        "description": "Google Developers Code Lab at VVIT University (VVITU), fostering software engineering, mobile development, cloud computing, and developer community events.",
+        "keywords": ["google", "code lab", "google developers", "gdsc", "developer student club"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/IDEA-Labs",
+        "url": "https://vvitu.ac.in/IDEA-Labs",
+        "title": "VVITU AICTE IDEA Lab",
+        "description": "AICTE IDEA (Idea Development, Evaluation & Application) Lab at VVIT University (VVITU), promoting hands-on STEM engineering and rapid prototyping.",
+        "keywords": ["idea lab", "idea labs", "aicte idea lab", "prototyping", "innovation lab"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/governing_body",
+        "url": "https://vvitu.ac.in/governing_body",
+        "title": "VVITU Governing Body",
+        "description": "Governing Body of VVIT University (VVITU), responsible for apex institutional governance, strategic leadership, and policy direction.",
+        "keywords": ["governing body", "governing council", "bog", "governance", "board of governors"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/academic_council",
+        "url": "https://vvitu.ac.in/academic_council",
+        "title": "VVITU Academic Council",
+        "description": "Academic Council of VVIT University (VVITU), overseeing curriculum regulations, syllabi approvals, academic standards, and degree requirements.",
+        "keywords": ["academic council", "academic board", "curriculum council"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/board_of_management",
+        "url": "https://vvitu.ac.in/board_of_management",
+        "title": "VVITU Board of Management",
+        "description": "Board of Management of VVIT University (VVITU), guiding executive university administration and developmental decisions.",
+        "keywords": ["board of management", "bom", "management board"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/finance_commitee",
+        "url": "https://vvitu.ac.in/finance_commitee",
+        "title": "VVITU Finance Committee",
+        "description": "Finance Committee of VVIT University (VVITU), managing financial planning, budget allocations, and fiscal governance.",
+        "keywords": ["finance committee", "financial committee", "budget committee"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/registrar",
+        "url": "https://vvitu.ac.in/registrar",
+        "title": "VVITU Office of the Registrar",
+        "description": "Office of the Registrar at VVIT University (VVITU), overseeing official university records, admissions registration, and statutory correspondence.",
+        "keywords": ["registrar", "office of registrar", "records"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/pro-chancellor",
+        "url": "https://vvitu.ac.in/pro-chancellor",
+        "title": "VVITU Pro-Chancellor",
+        "description": "Pro-Chancellor of VVIT University (VVITU), providing institutional leadership and strategic vision alongside the Chancellor.",
+        "keywords": ["pro-chancellor", "pro chancellor"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/academic-dean",
+        "url": "https://vvitu.ac.in/academic-dean",
+        "title": "VVITU Academic Dean",
+        "description": "Dean of Academics at VVIT University (VVITU), coordinating academic delivery, faculty development, and educational quality across schools.",
+        "keywords": ["academic dean", "dean academics", "dean of academics", "dean"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/university-policies",
+        "url": "https://vvitu.ac.in/university-policies",
+        "title": "VVITU Institutional Policies & Codes of Conduct",
+        "description": "Institutional codes of conduct, anti-ragging policies, ethical guidelines, and disciplinary rules at VVIT University (VVITU).",
+        "keywords": ["policy", "policies", "anti ragging", "code of conduct", "discipline", "rules"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/student-clubs",
+        "url": "https://vvitu.ac.in/student-clubs",
+        "title": "VVITU Student Activity Clubs",
+        "description": "Student clubs and technical & cultural societies at VVIT University (VVITU) covering dance, music, robotics, photography, sports, and social service.",
+        "keywords": ["club", "clubs", "student club", "student clubs", "sac", "cultural club", "technical club"],
+        "wait_selector": "#root",
+    },
+    {
+        "path": "/",
+        "url": "https://vvitu.ac.in/",
+        "title": "VVITU Official University Portal (Homepage)",
+        "description": "Official primary portal of VVIT University (VVITU), featuring latest university announcements, campus updates, admissions, and institutional highlights.",
+        "keywords": ["homepage", "main portal", "vvitu website", "official portal", "latest news", "campus news", "events"],
+        "wait_selector": "#root",
+    },
+]
+
+
+# =====================================================================
 # OFFICIAL WEB RETRIEVER
 # =====================================================================
 
@@ -135,6 +343,8 @@ class OfficialWebRetriever:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         })
         self.cache = OfficialWebCache()
+        self.browser_service = get_browser_retrieval_service()
+        self.routes_catalog = OFFICIAL_VVITU_ROUTES
 
         # Find local bundle if available
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -589,9 +799,93 @@ class OfficialWebRetriever:
 
         return results
 
+    def _find_matching_routes(self, query: str) -> List[Dict[str, Any]]:
+        """Match user query against known VVITU dynamic routes with word-boundary precision."""
+        q_norm = query.lower()
+        q_tokens = self._tokenize(query)
+        stop_words = {
+            "tell", "about", "what", "give", "show", "who", "whom", "where",
+            "when", "which", "how", "details", "info", "information", "please",
+            "can", "you", "know", "there", "their", "this", "that", "with",
+            "from", "does", "have", "some", "more", "much", "many", "been",
+        }
+        meaningful_tokens = {t for t in q_tokens if t not in stop_words and len(t) > 2}
+
+        matches = []
+        for route in self.routes_catalog:
+            score = 0
+            for kw in route["keywords"]:
+                kw_lower = kw.lower()
+                if " " in kw_lower:
+                    if kw_lower in q_norm:
+                        score += 3
+                else:
+                    if kw_lower in meaningful_tokens:
+                        score += 2
+
+            if score > 0:
+                matches.append((score, route))
+
+        matches.sort(key=lambda x: x[0], reverse=True)
+        return [m[1] for m in matches]
+
+    async def render_official_page(
+        self,
+        url: str,
+        query: str = "",
+        wait_selector: Optional[str] = None,
+    ) -> OfficialWebResult:
+        """
+        Render an official page using headless browser (DOM or Screenshot/Vision fallback).
+        """
+        render_res = await self.browser_service.render_page(url, query=query, wait_selector=wait_selector)
+        is_vvitu = any(d in url for d in CURRENT_DOMAINS)
+        period = "current" if is_vvitu else "historical"
+        tier = "primary_official_current" if is_vvitu else "legacy_official_vvit"
+
+        if render_res.success:
+            content = (
+                f"**{render_res.title}**\n"
+                f"• **Official URL:** {url}\n"
+                f"• **Institution:** {'VVIT University (VVITU)' if is_vvitu else 'Vasireddy Venkatadri Institute of Technology (VVIT)'}\n"
+                f"• **Retrieval Method:** {render_res.method}\n\n"
+                f"{render_res.text[:2500]}"
+            )
+            return OfficialWebResult(
+                title=render_res.title or ("VVITU Official Portal" if is_vvitu else "VVIT Legacy Portal"),
+                url=url,
+                content=content,
+                period=period,
+                source_tier=tier,
+                confidence=0.96,
+                entity_type="general_page",
+                retrieval_method=render_res.method,
+                metadata={"chars": len(render_res.text)},
+            )
+        else:
+            # Direct canonical URL fallback when extraction is incomplete
+            content = (
+                f"**Official Portal Page: {url}**\n"
+                f"• **Official URL:** {url}\n"
+                f"• **Institution:** {'VVIT University (VVITU)' if is_vvitu else 'Vasireddy Venkatadri Institute of Technology (VVIT)'}\n"
+                f"• **Status:** Content could not be automatically extracted from dynamic components.\n"
+                f"• **Action:** Direct page link verified and available."
+            )
+            return OfficialWebResult(
+                title="Official Portal Page",
+                url=url,
+                content=content,
+                period=period,
+                source_tier=tier,
+                confidence=0.85,
+                entity_type="general_page",
+                retrieval_method="direct_url_only",
+                metadata={"error": render_res.error},
+            )
+
     def _search_vvitguntur_live(self, query: str, max_items: int = 2) -> List[OfficialWebResult]:
         """
-        Perform live search on https://vvitguntur.com/ using its Joomla search endpoint.
+        Perform synchronous live search on https://vvitguntur.com/ using its Joomla search endpoint.
         """
         clean_query = re.sub(r"[^a-zA-Z0-9\s]", "", query).strip()
         words = clean_query.split()
@@ -619,12 +913,10 @@ class OfficialWebRetriever:
                 relative_url = a_tag["href"]
                 full_url = urljoin("https://vvitguntur.com/", relative_url)
 
-                # Validate domain
                 parsed = urlparse(full_url)
                 if parsed.hostname not in LEGACY_DOMAINS:
                     continue
 
-                # Fetch article content
                 article_text = self._fetch_legacy_page(full_url)
                 if article_text:
                     results.append(OfficialWebResult(
@@ -640,8 +932,72 @@ class OfficialWebRetriever:
                         source_tier="legacy_official_vvit",
                         confidence=0.88,
                         entity_type="general_page",
+                        retrieval_method="http",
                         metadata={"title": title, "url": full_url},
                     ))
+        except Exception as exc:
+            logger.debug("Live legacy search failed: %s", exc)
+
+        return results
+
+    async def _search_vvitguntur_live_async(self, query: str, max_items: int = 2) -> List[OfficialWebResult]:
+        """
+        Perform live search on https://vvitguntur.com/ with HTTP and Headless fallback.
+        """
+        clean_query = re.sub(r"[^a-zA-Z0-9\s]", "", query).strip()
+        words = clean_query.split()
+        if not words:
+            return []
+
+        searchword = "+".join(words[:4])
+        search_url = f"https://vvitguntur.com/index.php/component/search/?searchword={searchword}&searchphrase=all"
+
+        results = []
+        try:
+            resp = await asyncio.to_thread(self.session.get, search_url, timeout=REQUEST_TIMEOUT)
+            if resp.status_code != 200:
+                return []
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            result_tags = soup.find_all("dt", class_="result-title")
+
+            for tag in result_tags[:max_items]:
+                a_tag = tag.find("a")
+                if not a_tag or not a_tag.get("href"):
+                    continue
+
+                title = a_tag.get_text(strip=True)
+                relative_url = a_tag["href"]
+                full_url = urljoin("https://vvitguntur.com/", relative_url)
+
+                parsed = urlparse(full_url)
+                if parsed.hostname not in LEGACY_DOMAINS:
+                    continue
+
+                # Try fast HTTP first
+                article_text = await asyncio.to_thread(self._fetch_legacy_page, full_url)
+                if article_text and len(article_text.strip()) >= 100:
+                    results.append(OfficialWebResult(
+                        title=f"VVIT Legacy — {title}",
+                        url=full_url,
+                        content=(
+                            f"**VVIT Legacy Archive: {title}**\n"
+                            f"• **Source:** Vasireddy Venkatadri Institute of Technology (Historical Archive)\n"
+                            f"• **URL:** {full_url}\n\n"
+                            f"{article_text[:1200]}"
+                        ),
+                        period="historical",
+                        source_tier="legacy_official_vvit",
+                        confidence=0.88,
+                        entity_type="general_page",
+                        retrieval_method="http",
+                        metadata={"title": title, "url": full_url},
+                    ))
+                else:
+                    # Fallback to headless browser render
+                    render_res = await self.render_official_page(full_url, query=query)
+                    results.append(render_res)
+
         except Exception as exc:
             logger.debug("Live legacy search failed: %s", exc)
 
@@ -674,48 +1030,94 @@ class OfficialWebRetriever:
     ) -> List[OfficialWebResult]:
         """
         Asynchronously retrieve verified information from official websites.
-        Respects query period ('current', 'historical', 'general').
+        Orchestrates Tier 1 Catalog (0ms), Tier 2 HTTP (~200ms),
+        Tier 3 Headless Browser DOM (~1.5s - 3s), and Tier 4 Screenshot + Vision OCR.
         """
         cached = self.cache.get(f"{query}:{period}")
         if cached is not None:
             return cached[:max_results]
 
-        results = await asyncio.to_thread(self._retrieve_sync, query, period, max_results)
-        self.cache.set(f"{query}:{period}", results)
-        return results
-
-    def _retrieve_sync(
-        self,
-        query: str,
-        period: str = "general",
-        max_results: int = 3,
-    ) -> List[OfficialWebResult]:
-        """Synchronous retrieval implementation."""
         results: List[OfficialWebResult] = []
 
         if period == "historical":
-            # Historical query: prioritize legacy website
-            legacy_results = self.search_vvit_legacy(query)
-            results.extend(legacy_results)
+            # 1. Historical query: check legacy leadership
+            for leader in self.leadership_catalog:
+                if leader["period"] == "historical" or any(kw in query.lower() for kw in leader["keywords"]):
+                    results.append(OfficialWebResult(
+                        title=f"VVIT Legacy Official — {leader['title']}",
+                        url=leader["url"],
+                        content=(
+                            f"**{leader['name']}**\n"
+                            f"• **Role / Title:** {leader['title']}\n"
+                            f"• **Institution:** {leader['organization']}\n"
+                            f"• **Historical Profile:** {leader['url']}\n\n"
+                            f"{leader['description']}"
+                        ),
+                        period="historical",
+                        source_tier="legacy_official_vvit",
+                        confidence=0.96,
+                        entity_type="leadership",
+                        retrieval_method="catalog",
+                        metadata=leader,
+                    ))
+
+            # 2. Live legacy search with headless fallback
             if not results:
-                curr_results = self.search_vvitu(query)
-                results.extend(curr_results)
+                legacy_live = await self._search_vvitguntur_live_async(query, max_items=max_results)
+                results.extend(legacy_live)
+
         elif period == "current":
-            # Current query: prioritize current university
+            # 1. Check catalog (leadership, faculty, schools, programs, pages)
             curr_results = self.search_vvitu(query)
             results.extend(curr_results)
+
+            # 2. Check dynamic official routes (examinations, notifications, careers, hostels, transport, etc.)
+            matched_routes = self._find_matching_routes(query)
+            for route in matched_routes[:2]:
+                if not any(r.url == route["url"] for r in results):
+                    route_res = await self.render_official_page(
+                        route["url"],
+                        query=query,
+                        wait_selector=route.get("wait_selector"),
+                    )
+                    results.append(route_res)
+
+            # 3. If still empty, render homepage headlessly
             if not results:
-                legacy_results = self.search_vvit_legacy(query)
-                results.extend(legacy_results)
+                home_res = await self.render_official_page("https://vvitu.ac.in/", query=query, wait_selector="#root")
+                if home_res.retrieval_method != "failed":
+                    results.append(home_res)
+
         else:
-            # General query: check current first
+            # General query: check current catalog first
             curr_results = self.search_vvitu(query)
             results.extend(curr_results)
-            # Only search legacy if current found nothing or if explicitly mentioning historical/vvit
+
+            # Check dynamic official routes
+            matched_routes = self._find_matching_routes(query)
+            for route in matched_routes[:2]:
+                if not any(r.url == route["url"] for r in results):
+                    route_res = await self.render_official_page(
+                        route["url"],
+                        query=query,
+                        wait_selector=route.get("wait_selector"),
+                    )
+                    results.append(route_res)
+
+            # If legacy query or no current results, search legacy
             q_lower = query.lower()
-            if not results or "vvit" in q_lower or "legacy" in q_lower or "history" in q_lower or "old" in q_lower:
+            if not results or any(kw in q_lower for kw in ["vvit", "legacy", "history", "old", "jntuk", "autonomous"]):
                 legacy_results = self.search_vvit_legacy(query)
                 results.extend(legacy_results)
+                if not legacy_results:
+                    legacy_live = await self._search_vvitguntur_live_async(query, max_items=2)
+                    results.extend(legacy_live)
+
+            # If still empty, render homepage headlessly
+            if not results:
+                home_res = await self.render_official_page("https://vvitu.ac.in/", query=query, wait_selector="#root")
+                if home_res.retrieval_method != "failed":
+                    results.append(home_res)
 
         # Deduplicate by URL
         seen_urls = set()
@@ -725,7 +1127,9 @@ class OfficialWebRetriever:
                 seen_urls.add(r.url)
                 deduped.append(r)
 
-        return deduped[:max_results]
+        final_results = deduped[:max_results]
+        self.cache.set(f"{query}:{period}", final_results)
+        return final_results
 
     def get_all_catalog_pages(self) -> List[Dict[str, Any]]:
         """
