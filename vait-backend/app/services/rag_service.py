@@ -22,6 +22,7 @@ from app.utils.config import (
 from app.services.embedding_service import EmbeddingService
 from app.services.llm_service import LLMService
 from app.services.response_planner import response_planner, ResponsePlan
+from app.services.official_web_retriever import get_official_web_retriever, OfficialWebResult
 from app.utils.text_chunker import TextChunker
 
 logger = logging.getLogger("vait.rag")
@@ -207,6 +208,7 @@ class RAGService:
         self._cache_misses: int = 0
         self._start_time: float = time.time()
         self._official_bootstrap_attempted: bool = False
+        self.web_retriever = get_official_web_retriever()
 
     async def initialize(self) -> None:
         """Initialize the RAG service and load existing index if available."""
@@ -397,15 +399,15 @@ class RAGService:
         ]
         return any(re.search(p, q, re.IGNORECASE) for p in patterns)
 
-    @classmethod
-    def _is_institutional_query(cls, query: str) -> bool:
+    def _is_institutional_query(self, query: str) -> bool:
         """
         Determine if the query is specifically about VVIT, VVITU, campus,
-        or institutional operations, rather than general knowledge/coding/casual chat.
+        faculty, leadership, departments, or institutional operations,
+        rather than general knowledge/coding/casual chat.
         """
         q = query.lower()
 
-        # Direct college / institute / university name mentions
+        # 1. Direct college / institute / university name mentions
         institutional_names = {
             "vvit", "vvitu", "vasireddy", "venkatadri", "nambur",
             "vvitian", "vvitians", "vvitguntur",
@@ -413,9 +415,20 @@ class RAGService:
         if any(re.search(rf"\b{re.escape(name)}\b", q) for name in institutional_names):
             return True
 
-        # College / campus roles, bodies, facilities, and administration
+        # 2. Check if official web retriever catalog matches an entity (faculty, leadership, school, program)
+        if hasattr(self, "web_retriever") and self.web_retriever:
+            vvitu_matches = self.web_retriever.search_vvitu(query)
+            if vvitu_matches:
+                return True
+
+        # 3. Person title patterns (e.g. Dr., Prof., faculty)
+        if re.search(r"\b(dr\b|prof\b|professor|faculty|lecturer|teacher|dean|chancellor|principal|hod)\b", q):
+            return True
+
+        # 4. College / campus roles, bodies, facilities, and administration
         college_entities = [
             r"\b(principal|vice principal|director|dean|chairman|hod|chancellor|vice chancellor)\b",
+            r"\b(faculty|professor|prof|assistant professor|associate professor|dr\b|lecturer|teacher)\b",
             r"\b(our college|our campus|our university|this college|this campus|this university)\b",
             r"\b(college|campus|university|institute)\b",
             r"\b(hostel|mess|canteen|library|bus|transport|bus route|bus fees?)\b",
@@ -428,6 +441,51 @@ class RAGService:
             r"\b(academic calendar|class schedule|timetable)\b",
         ]
         return any(re.search(pattern, q) for pattern in college_entities)
+
+    def _is_rag_sufficient(self, query: str, qualified_chunks: List[RetrievedChunk]) -> bool:
+        """
+        Evaluate whether retrieved RAG chunks actually contain the specific named entity
+        or core subject of the query.
+        """
+        if not qualified_chunks:
+            return False
+
+        q_lower = query.lower()
+        name_indicators = ["dr.", "dr ", "prof.", "prof ", "mr.", "mr ", "faculty", "who is", "tell me about", "details of", "profile of"]
+        has_name_indicator = any(ind in q_lower for ind in name_indicators)
+
+        if has_name_indicator:
+            stop_words = {
+                "tell", "about", "who", "what", "where", "when", "how", "the", "for",
+                "with", "from", "and", "our", "are", "you", "details", "give", "info",
+                "information", "does", "profile", "vvit", "vvitu", "college", "university",
+                "please", "know", "name",
+            }
+            tokens = [
+                w for w in re.sub(r"[^a-zA-Z0-9\s]", " ", q_lower).split()
+                if len(w) >= 3 and w not in stop_words
+            ]
+            if tokens:
+                combined_text = " ".join(c.content.lower() for c in qualified_chunks)
+                found = any(t in combined_text for t in tokens)
+                if not found:
+                    logger.info("RAG insufficient: Query entity tokens %s not found in retrieved chunks", tokens)
+                    return False
+
+        return True
+
+    @staticmethod
+    def _extract_searched_entity_name(query: str) -> Optional[str]:
+        """Extract person or specific entity name from query."""
+        m = re.search(r'((?:dr\.?|prof\.?|mr\.?|mrs\.?|ms\.?)\s+[a-zA-Z\.\s]+)', query, re.IGNORECASE)
+        if m:
+            return m.group(1).strip().rstrip('?.,')
+        m = re.search(r'(?:tell me about|who is|details of|profile of|faculty)\s+([a-zA-Z\.\s]+)', query, re.IGNORECASE)
+        if m:
+            candidate = m.group(1).strip().rstrip('?.,')
+            if candidate.lower() not in {"vvit", "vvitu", "the college", "the campus", "the university", "admissions", "placements", "our college", "our campus"}:
+                return candidate
+        return None
 
     @staticmethod
     def _detect_query_period(query: str) -> str:
@@ -868,8 +926,41 @@ class RAGService:
                 retrieval_empty = True
                 qualified = []
 
-        # ── CONTEXT OPTIMIZATION ─────────────────────────────────────
-        if not retrieval_empty:
+        # Check if RAG chunks actually contain the query entity
+        if not retrieval_empty and not self._is_rag_sufficient(message, qualified):
+            logger.info("RAG context is insufficient for query entity; falling back to official web retrieval")
+            retrieval_empty = True
+            qualified = []
+
+        # ── Step 4: Official Web Retrieval Fallback (if RAG is empty/insufficient) ──
+        official_web_results: List[OfficialWebResult] = []
+        if retrieval_empty and is_institutional:
+            try:
+                official_web_results = await self.web_retriever.retrieve(message, period=query_period)
+            except Exception as exc:
+                logger.warning("Official web fallback retrieval failed: %s", exc)
+
+        # ── CONTEXT OPTIMIZATION & PROMPT PREPARATION ─────────────────
+        if official_web_results:
+            context = "\n\n".join(r.content for r in official_web_results)
+            sources = [r.url for r in official_web_results]
+            structured_sources = [r.to_structured_source() for r in official_web_results]
+            source_visibility = "compact" if len(structured_sources) <= 1 else "full"
+            confidence = "High"
+            top_adjusted = 0.95
+            final_prompt = self._build_generation_prompt(
+                context=context,
+                query=message,
+                formatting_instructions=(
+                    f"{response_plan.formatting_instructions}\n\n"
+                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
+                    "• The above information was retrieved directly from the official institutional portal.\n"
+                    "• Answer the user's question directly, factually, and completely using this verified information.\n"
+                    "• Cite key details (e.g. designation, department, qualification, role, portal link).\n"
+                    "• NEVER tell the user to visit or search the website for information given above; provide the verified facts directly."
+                ),
+            )
+        elif not retrieval_empty:
             # 1. Remove near-duplicate chunks
             qualified = self._remove_near_duplicates(qualified)
             # 2. Merge adjacent chunks from same source
@@ -892,6 +983,30 @@ class RAGService:
             # ── Compute confidence (adjusted_score-based) ────────────────
             confidence = self._compute_confidence_adjusted(top_adjusted)
         else:
+            # Check if query was searching for a specific named entity/person that does not exist
+            entity_name = self._extract_searched_entity_name(message)
+            if entity_name and is_institutional:
+                reply = (
+                    f"Based on official records across the VVITU official portal (https://vvitu.ac.in/) "
+                    f"and the legacy VVIT portal (https://vvitguntur.com/), no official record was found for **{entity_name}**.\n\n"
+                    f"If you are looking for faculty or staff in a specific school or department (such as CSE, AI, ECE, EEE, Civil, Mechanical, or Business Administration), "
+                    f"please let me know and I will be happy to look up the official faculty directory for you."
+                )
+                sources, structured_sources = self._get_fallback_sources_for_query(message)
+                resp = RAGResponse(
+                    reply=reply,
+                    sources=sources,
+                    structured_sources=structured_sources,
+                    source_visibility="compact",
+                    confidence="High",
+                    retrieval_score=1.0,
+                    is_refusal=False,
+                    intent="faculty_lookup",
+                    response_type="factual",
+                )
+                self._cache_put(message, resp)
+                return resp
+
             context = ""
             if is_institutional:
                 sources, structured_sources = self._get_fallback_sources_for_query(message)
@@ -1075,7 +1190,41 @@ class RAGService:
                 retrieval_empty = True
                 qualified = []
 
-        if not retrieval_empty:
+        # Check if RAG chunks actually contain the query entity
+        if not retrieval_empty and not self._is_rag_sufficient(message, qualified):
+            logger.info("RAG context is insufficient for query entity; falling back to official web retrieval")
+            retrieval_empty = True
+            qualified = []
+
+        # ── Step 4: Official Web Retrieval Fallback (if RAG is empty/insufficient) ──
+        official_web_results: List[OfficialWebResult] = []
+        if retrieval_empty and is_institutional:
+            try:
+                official_web_results = await self.web_retriever.retrieve(message, period=query_period)
+            except Exception as exc:
+                logger.warning("Official web fallback retrieval failed: %s", exc)
+
+        # ── CONTEXT OPTIMIZATION & PROMPT PREPARATION ─────────────────
+        if official_web_results:
+            context = "\n\n".join(r.content for r in official_web_results)
+            sources = [r.url for r in official_web_results]
+            structured_sources = [r.to_structured_source() for r in official_web_results]
+            source_visibility = "compact" if len(structured_sources) <= 1 else "full"
+            confidence = "High"
+            top_adjusted = 0.95
+            final_prompt = self._build_generation_prompt(
+                context=context,
+                query=message,
+                formatting_instructions=(
+                    f"{response_plan.formatting_instructions}\n\n"
+                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
+                    "• The above information was retrieved directly from the official institutional portal.\n"
+                    "• Answer the user's question directly, factually, and completely using this verified information.\n"
+                    "• Cite key details (e.g. designation, department, qualification, role, portal link).\n"
+                    "• NEVER tell the user to visit or search the website for information given above; provide the verified facts directly."
+                ),
+            )
+        elif not retrieval_empty:
             qualified = self._remove_near_duplicates(qualified)
             qualified = self._merge_adjacent_chunks(qualified)
             qualified = qualified[:MAX_CONTEXT_CHUNKS]
@@ -1091,6 +1240,21 @@ class RAGService:
             )
             confidence = self._compute_confidence_adjusted(top_adjusted)
         else:
+            # Check if query was searching for a specific named entity/person that does not exist
+            entity_name = self._extract_searched_entity_name(message)
+            if entity_name and is_institutional:
+                reply = (
+                    f"Based on official records across the VVITU official portal (https://vvitu.ac.in/) "
+                    f"and the legacy VVIT portal (https://vvitguntur.com/), no official record was found for **{entity_name}**.\n\n"
+                    f"If you are looking for faculty or staff in a specific school or department (such as CSE, AI, ECE, EEE, Civil, Mechanical, or Business Administration), "
+                    f"please let me know and I will be happy to look up the official faculty directory for you."
+                )
+                sources, structured_sources = self._get_fallback_sources_for_query(message)
+                yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "source_visibility": "compact", "confidence": "High", "retrieval_score": 1.0, "intent": "faculty_lookup", "response_type": "factual"})}\n\n'
+                yield f'data: {json.dumps({"type": "content", "content": reply})}\n\n'
+                yield f'data: {json.dumps({"type": "done", "response_type": "factual", "source_visibility": "compact", "sources": sources, "structured_sources": structured_sources, "confidence": "High"})}\n\n'
+                return
+
             context = ""
             if is_institutional:
                 sources, structured_sources = self._get_fallback_sources_for_query(message)
@@ -1675,7 +1839,8 @@ class RAGService:
             "2. If asked about the current official website, cite https://vvitu.ac.in/.\n"
             "3. If asked about the old VVIT website, cite https://vvitguntur.com/.\n"
             "4. For current matters, prioritize VVITU. For historical matters, use legacy VVIT.\n"
-            "5. Only mention the institutional transition when relevant to the question."
+            "5. Only mention the institutional transition when relevant to the question.\n"
+            "6. NEVER tell the user to manually visit or search the official website (e.g. 'You can check the faculty directory on vvitu.ac.in'). If details for a specific person or record are not known, state directly and plainly that the details are not available in current records."
             f"{format_block}"
         )
 

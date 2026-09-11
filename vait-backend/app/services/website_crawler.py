@@ -120,18 +120,19 @@ class CrawlStats:
 class CrawledPage:
     """Represents a single crawled page."""
 
-    __slots__ = ("url", "title", "text", "depth", "raw_html")
+    __slots__ = ("url", "title", "text", "depth", "raw_html", "metadata")
 
-    def __init__(self, url: str, title: str, text: str, depth: int, raw_html: str = ""):
+    def __init__(self, url: str, title: str, text: str, depth: int, raw_html: str = "", metadata: Optional[Dict] = None):
         self.url = url
         self.title = title
         self.text = text
         self.depth = depth
         self.raw_html = raw_html
+        self.metadata = metadata or {}
 
     def to_dict(self) -> Dict:
         """Convert to metadata-ready dict for ingestion."""
-        return {
+        d = {
             "text": self.text,
             "url": self.url,
             "title": self.title,
@@ -140,6 +141,9 @@ class CrawledPage:
             "authority_level": "medium",
             "document_type": "official_website",
         }
+        if self.metadata:
+            d.update(self.metadata)
+        return d
 
 
 # =====================================================================
@@ -272,6 +276,7 @@ class WebsiteCrawler:
 
         self._visited: Set[str] = set()
         self._content_hashes: Set[str] = set()
+        self._spa_ingested: Set[str] = set()
         self.extractor = ContentExtractor()
         self.stats = CrawlStats()
 
@@ -305,6 +310,39 @@ class WebsiteCrawler:
                 self.stats.record_skip("url_pattern")
                 logger.debug("Skipped (pattern): %s", url)
                 continue
+
+            # SPA-Aware Ingestion for vvitu.ac.in
+            parsed_host = (urlparse(url).hostname or "").lower()
+            if parsed_host in {"vvitu.ac.in", "www.vvitu.ac.in"} and "vvitu_spa" not in self._spa_ingested:
+                self._spa_ingested.add("vvitu_spa")
+                try:
+                    from app.services.official_web_retriever import get_official_web_retriever
+                    retriever = get_official_web_retriever()
+                    catalog_pages = retriever.get_all_catalog_pages()
+                    logger.info("SPA Crawler: Ingesting %d official catalog entities for VVITU", len(catalog_pages))
+                    for cp in catalog_pages:
+                        if len(pages) >= self.max_pages:
+                            break
+                        c_url = cp["url"]
+                        c_hash = hashlib.md5(cp["text"].encode("utf-8")).hexdigest()
+                        if c_hash not in self._content_hashes:
+                            self._content_hashes.add(c_hash)
+                            c_page = CrawledPage(
+                                url=c_url,
+                                title=cp["title"],
+                                text=cp["text"],
+                                depth=cp.get("depth", 1),
+                                metadata={
+                                    "period": cp.get("period", "current"),
+                                    "source_tier": cp.get("source_tier", "primary_official_current"),
+                                    "document_type": cp.get("document_type", "official_website_current"),
+                                },
+                            )
+                            pages.append(c_page)
+                            self.stats.record_crawled()
+                            self._visited.add(c_url)
+                except Exception as exc:
+                    logger.warning("Failed to ingest SPA catalog pages: %s", exc)
 
             page = self._fetch_and_extract(url, depth)
             if page is None:
@@ -474,4 +512,5 @@ class WebsiteCrawler:
         """Clear visited set, content hashes, and stats for a fresh crawl."""
         self._visited.clear()
         self._content_hashes.clear()
+        self._spa_ingested.clear()
         self.stats = CrawlStats()
