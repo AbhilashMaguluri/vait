@@ -35,6 +35,7 @@
   flex: 1;
   border: none;
   outline: none;
+  box-shadow: none;
   font-family: inherit;
   font-size: 13.5px;
   color: var(--vait-text-primary);
@@ -44,6 +45,17 @@
   min-height: 24px;
   max-height: 120px;
   padding: 3px 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.chat-input-field:focus,
+.chat-input-field:focus-visible,
+.chat-input-field:active {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
 }
 
 .chat-input-field::placeholder {
