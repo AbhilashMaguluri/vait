@@ -1,3 +1,63 @@
+:root {
+  /* Brand and Neutral Palette */
+  --vait-bg: #f6f6f8;
+  --vait-surface: #ffffff;
+  --vait-sidebar-bg: #fafafb;
+  --vait-border: #e6e7ec;
+  --vait-border-subtle: #f0f1f4;
+  --vait-border-hover: #cbccd4;
+
+  /* Primary Deep Navy & Accents */
+  --vait-primary: #181b2a;
+  --vait-primary-hover: #262a40;
+  --vait-primary-subtle: #eef1f8;
+  --vait-accent: #3b5bf5;
+
+  /* Text Hierarchy */
+  --vait-text-primary: #1a1d26;
+  --vait-text-secondary: #575a68;
+  --vait-text-muted: #8b8e9d;
+  --vait-text-inverse: #f8f9fc;
+
+  /* Category & Status Tints */
+  --vait-cat-academic: #1b6644;
+  --vait-cat-academic-bg: #edf7f2;
+  --vait-cat-academic-border: #d2ede0;
+
+  --vait-cat-exams: #885e16;
+  --vait-cat-exams-bg: #fef8eb;
+  --vait-cat-exams-border: #f6e6be;
+
+  --vait-cat-admin: #3d518c;
+  --vait-cat-admin-bg: #eff2fa;
+  --vait-cat-admin-border: #d4dcf2;
+
+  --vait-cat-placements: #6e327f;
+  --vait-cat-placements-bg: #f8f0fc;
+  --vait-cat-placements-border: #ebd3f2;
+
+  --vait-danger: #a53232;
+  --vait-danger-bg: #fdf2f2;
+  --vait-danger-border: #f4d0d0;
+
+  /* Elevation & Shadows */
+  --vait-shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --vait-shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.03);
+  --vait-shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --vait-shadow-lg: 0 12px 28px rgba(16, 24, 40, 0.12);
+
+  /* Radii */
+  --vait-radius-sm: 4px;
+  --vait-radius-md: 6px;
+  --vait-radius-lg: 10px;
+  --vait-radius-xl: 14px;
+  --vait-radius-full: 9999px;
+
+  /* Transitions */
+  --vait-transition-fast: 0.15s ease;
+  --vait-transition-normal: 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 *,
 *::before,
 *::after {
@@ -16,19 +76,31 @@ html {
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     Oxygen, Ubuntu, Cantarell, sans-serif;
-  background-color: #f5f5f3;
-  color: #2c2c3a;
+  background-color: var(--vait-bg);
+  color: var(--vait-text-primary);
   line-height: 1.5;
   overflow: hidden;
-}
-
-#root {
   height: 100vh;
   width: 100vw;
 }
 
+#root {
+  height: 100%;
+  width: 100%;
+}
+
 button {
   font-family: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--vait-primary);
+  outline-offset: 1px;
 }
 
 input,
@@ -37,8 +109,10 @@ select {
   font-family: inherit;
 }
 
+/* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -46,15 +120,15 @@ select {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d0d0da;
-  border-radius: 3px;
+  background: #d3d5de;
+  border-radius: var(--vait-radius-full);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #b0b0be;
+  background: #b2b5c5;
 }
 
 ::selection {
-  background: #d4dff7;
-  color: #1a1a2e;
+  background: #dbe4fa;
+  color: var(--vait-primary);
 }

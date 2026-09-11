@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { ArrowUp } from 'lucide-react';
 import { useChat } from '../context/ChatContext';
 import './ChatInput.css';
 
@@ -9,13 +10,24 @@ export default function ChatInput() {
   const { sendMessage, loading } = useChat();
   const inputRef = useRef(null);
 
+  // Auto-resize textarea based on input length
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }, [text]);
+
   const handleSend = () => {
     const trimmed = text.trim();
     if (!trimmed || loading || trimmed.length > MAX_CHARS) return;
     console.log('[VAIT][Debug] User input:', trimmed);
     sendMessage(trimmed);
     setText('');
-    inputRef.current?.focus();
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+      inputRef.current.focus();
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -27,43 +39,51 @@ export default function ChatInput() {
 
   const charCount = text.length;
   const isOverLimit = charCount > MAX_CHARS;
+  const canSend = Boolean(text.trim()) && !loading && !isOverLimit;
 
   return (
-    <div className="chat-input-container">
-      <div className="chat-input-wrapper">
-        <textarea
-          ref={inputRef}
-          className="chat-input-field"
-          placeholder="Ask VAIT a question..."
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={1}
-          disabled={loading}
-          aria-label="Message input"
-        />
-        <button
-          className="chat-send-btn"
-          onClick={handleSend}
-          disabled={!text.trim() || loading || isOverLimit}
-          aria-label="Send message"
-        >
-          {loading ? (
-            <span className="send-loading" />
-          ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-          )}
-        </button>
+    <footer className="chat-input-container">
+      <div className="chat-input-inner">
+        <div className="chat-input-wrapper">
+          <textarea
+            ref={inputRef}
+            className="chat-input-field"
+            placeholder="Ask VAIT about courses, exams, fees, or placements..."
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            disabled={loading}
+            aria-label="Message input"
+          />
+          <button
+            className={`chat-send-btn ${canSend ? 'send-btn-active' : ''}`}
+            onClick={handleSend}
+            disabled={!canSend}
+            title="Send message (Enter)"
+            aria-label="Send message"
+            type="button"
+          >
+            {loading ? (
+              <span className="send-loading" aria-label="Processing" />
+            ) : (
+              <ArrowUp size={16} strokeWidth={2.4} />
+            )}
+          </button>
+        </div>
+
+        <div className="chat-input-footer">
+          <span className="input-shortcut-hint">
+            <strong>Enter</strong> to send &bull; <strong>Shift+Enter</strong> for new line
+          </span>
+          <div className="input-status-right">
+            {loading && <span className="typing-indicator">VAIT is thinking...</span>}
+            <span className={`char-counter ${isOverLimit ? 'char-over' : ''}`}>
+              {charCount > 0 && `${charCount}/${MAX_CHARS}`}
+            </span>
+          </div>
+        </div>
       </div>
-      <div className="chat-input-footer">
-        <span className={`char-counter ${isOverLimit ? 'char-over' : ''}`}>
-          {charCount}/{MAX_CHARS}
-        </span>
-        {loading && <span className="typing-indicator">Thinking...</span>}
-      </div>
-    </div>
+    </footer>
   );
 }

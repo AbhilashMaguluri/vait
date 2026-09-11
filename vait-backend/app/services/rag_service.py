@@ -166,7 +166,7 @@ class _CacheEntry:
 _QUERY_NORMALIZE_PATTERNS = [
     (re.compile(r"(?i)^full\s+form\s+of\s+(.+)$"), r"What is the full name of \1?"),
     (re.compile(r"(?i)^expand\s+(.+)$"), r"What is the full name of \1?"),
-    (re.compile(r"(?i)^what\s+is\s+(.{1,10})\??$"), r"What is the full name of \1?"),
+    (re.compile(r"(?i)^what\s+is\s+([A-Za-z]{2,6})\??$"), r"What is the full name of \1?"),
 ]
 
 
