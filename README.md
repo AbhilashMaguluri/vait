@@ -110,7 +110,7 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
 - Content-hash deduplication during ingestion
 
 ### 🌐 Website Crawling
-- Domain-restricted crawling (only `vvitguntur.com` and `vvitu.ac.in`)
+- Domain-restricted dual-source crawling: primary current university (`vvitu.ac.in`) and legacy institute (`vvitguntur.com`)
 - Configurable depth limit (default 2) and max pages (default 200)
 - Intelligent HTML cleaning — removes scripts, nav, headers, footers
 - Polite crawling with 0.5s delay between requests

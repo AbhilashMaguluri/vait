@@ -66,7 +66,7 @@ QUESTION_TYPES = {
 }
 
 REFUSAL_MESSAGE = (
-    "Based on available VVIT sources, this information is not clearly specified."
+    "Based on available VVIT / VVITU sources, this information is not clearly specified."
 )
 
 
@@ -159,15 +159,22 @@ class Settings(BaseSettings):
     similarity_threshold: float = 0.65
     max_context_chars: int = 8000
 
+    # Institutional domains & sources (Dual-Source Strategy)
+    current_university_domain: str = "vvitu.ac.in"
+    current_university_url: str = "https://vvitu.ac.in/"
+    legacy_institute_domain: str = "vvitguntur.com"
+    legacy_institute_url: str = "https://vvitguntur.com/"
+
     allowed_domains: List[str] = [
-        "vvitguntur.com",
-        "www.vvitguntur.com",
         "vvitu.ac.in",
         "www.vvitu.ac.in",
+        "vvitguntur.com",
+        "www.vvitguntur.com",
     ]
+    # Crawl seeds: CURRENT university (vvitu.ac.in) is primary, followed by LEGACY institute (vvitguntur.com)
     crawl_seed_urls: List[str] = [
-        "https://www.vvitguntur.com/",
         "https://www.vvitu.ac.in/",
+        "https://www.vvitguntur.com/",
     ]
     crawl_depth_limit: int = 2
     crawl_max_pages: int = 200

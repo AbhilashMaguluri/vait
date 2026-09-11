@@ -61,13 +61,36 @@ def _infer_authority_level(document: dict[str, Any]) -> str:
 
 
 def _build_rag_metadata(document: dict[str, Any]) -> dict[str, Any]:
+    source_url = (document.get("source_url") or "").lower()
+    is_vvitu = "vvitu.ac.in" in source_url
+    is_vvit = "vvitguntur.com" in source_url
+
+    if is_vvitu:
+        source_tier = "primary_official_current"
+        institutional_period = "current"
+        source_label = "VVITU Official Website (Current)"
+    elif is_vvit:
+        source_tier = "legacy_official_vvit"
+        institutional_period = "historical"
+        source_label = "VVIT Legacy Website (Historical)"
+    elif _infer_authority_level(document) == "high":
+        source_tier = "primary_official"
+        institutional_period = "general"
+        source_label = "Official Institutional Document"
+    else:
+        source_tier = "related_web"
+        institutional_period = "general"
+        source_label = "Related Web Source"
+
     return {
         "document_type": "knowledge_source",
         "academic_year": _current_academic_year(),
         "department": document.get("department", "General"),
         "authority_level": _infer_authority_level(document),
         "source_type": document.get("source_type", "text"),
-        "source_tier": "primary_official" if _infer_authority_level(document) == "high" else "related_web",
+        "source_tier": source_tier,
+        "institutional_period": institutional_period,
+        "source_label": source_label,
         "url": document.get("source_url", ""),
         "document_id": str(document["_id"]),
     }

@@ -13,7 +13,11 @@ VAIT is an institutional AI assistant that provides accurate information exclusi
 - **NEVER answers without retrieved context**
 - **REFUSES when similarity score is below threshold**
 - **Does NOT learn from users** - only document re-ingestion improves knowledge
-- **Prioritizes source hierarchy** - official VVIT/VVITU websites > LinkedIn > other social > related web
+- **Prioritizes dual-source hierarchy**:
+  - **Current University (VVITU)**: `https://vvitu.ac.in/` — Primary source for all current information (academics, calendar, administration, regulations).
+  - **Legacy Institute (VVIT)**: `https://vvitguntur.com/` — Historical/legacy source for past institutional records (older programs, past calendar, archival records).
+  - **Secondary LinkedIn**: Official VVIT / VVITU updates
+  - **Tertiary Social / Related Web**: Supporting records only
 
 ---
 
@@ -98,16 +102,24 @@ Each chunk stores:
 | `document_type` | Type of document | regulation, syllabus, notice, website |
 | `academic_year` | Academic year | e.g., 2025-2026 |
 | `department` | Responsible department | string |
-| `source_tier` | Retrieval source priority tier | primary_official, secondary_linkedin, tertiary_social, related_web |
+| `source_tier` | Retrieval source priority tier | `primary_official_current`, `legacy_official_vvit`, `secondary_linkedin`, `tertiary_social`, `related_web` |
+| `institutional_period` | Institutional era tag | `current`, `historical`, `unspecified` |
+| `source_label` | Human-readable era badge | e.g. `VVITU Official Website (Current)`, `VVIT Legacy Website (Historical)` |
 | `authority_level` | Weight of the information | high, medium, low |
-| `source_file` | Original filename | string |
+| `source_file` | Original filename / URL | string |
 
 ### Source Priority
 
-1. **Primary Official** - VVIT/VVITU official websites and institutional documents
-2. **Secondary LinkedIn** - official VVIT and VVIT community LinkedIn updates
-3. **Tertiary Social** - Instagram/Twitter/Facebook/YouTube/event updates
-4. **Related Web** - external articles/reviews/portals (supporting only)
+1. **Primary Official Current** — VVITU current official website (`https://vvitu.ac.in/`) and current university documents. Takes precedence on all current university facts.
+2. **Legacy Official VVIT** — VVIT legacy official website (`https://vvitguntur.com/`) and historical institute records. Represents the older institutional period before university transition.
+3. **Secondary LinkedIn** — Official VVIT / VVITU LinkedIn updates.
+4. **Tertiary Social** — Instagram / Twitter / Facebook / YouTube updates.
+5. **Related Web** — External articles / reviews / portals (supporting only).
+
+> **Conflict Resolution**:
+> - For questions about **current facts** (current programs, current leadership/principal, current calendar, current fees/regulations): Current VVITU (`vvitu.ac.in`) ALWAYS takes precedence.
+> - For questions about **historical facts** (past syllabus, older regulations, legacy institute history): Legacy VVIT (`vvitguntur.com`) represents the older period.
+> - VAIT never describes `vvitguntur.com` as the current official website of VVITU.
 
 ---
 
@@ -233,7 +245,7 @@ Process a chat message.
 **Response (refusal - mandatory message):**
 ```json
 {
-"reply": "Based on available VVIT sources, this information is not clearly specified.",
+"reply": "Based on available VVIT / VVITU sources, this information is not clearly specified.",
 "sources": []
 }
 ```
@@ -363,7 +375,7 @@ curl -X POST "http://localhost:8000/api/vait/chat" \
 
 When context is missing or similarity is below threshold:
 
-> **"Based on available VVIT sources, this information is not clearly specified."**
+> **"Based on available VVIT / VVITU sources, this information is not clearly specified."**
 
 This message is non-negotiable and ensures institutional consistency.
 

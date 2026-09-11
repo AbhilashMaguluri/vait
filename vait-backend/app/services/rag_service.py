@@ -42,13 +42,20 @@ SOURCE_TYPE_BOOST = {
 }
 
 SOURCE_TIER_BOOST = {
+    "primary_official_current": 0.08,
     "primary_official": 0.06,
+    "legacy_official_vvit": 0.05,
     "secondary_linkedin": 0.03,
     "tertiary_social": 0.01,
     "related_web": 0.00,
 }
 
-OFFICIAL_DOMAINS = ("vvitguntur.com", "vvitu.ac.in")
+CURRENT_UNIVERSITY_DOMAINS = ("vvitu.ac.in", "www.vvitu.ac.in")
+LEGACY_INSTITUTE_DOMAINS = ("vvitguntur.com", "www.vvitguntur.com")
+OFFICIAL_DOMAINS = CURRENT_UNIVERSITY_DOMAINS + LEGACY_INSTITUTE_DOMAINS
+
+CURRENT_UNIVERSITY_URL = "https://vvitu.ac.in/"
+LEGACY_INSTITUTE_URL = "https://vvitguntur.com/"
 
 DYNAMIC_QUERY_KEYWORDS = {
     "latest", "recent", "new", "happening", "happen", "happens",
@@ -339,6 +346,225 @@ class RAGService:
         return any(re.search(p, q, re.IGNORECASE) for p in patterns)
 
     @staticmethod
+    def _detect_query_period(query: str) -> str:
+        """
+        Determine whether a query is asking for CURRENT, HISTORICAL, or BOTH/GENERAL information.
+
+        Returns:
+            "current", "historical", or "both"
+        """
+        q = query.lower()
+        historical_terms = {
+            "old", "legacy", "historical", "history", "past", "former",
+            "earlier", "previous", "was", "archive", "archived", "before transition",
+        }
+        current_terms = {
+            "current", "currently", "now", "present", "latest", "today",
+            "active", "new", "vvitu", "university",
+        }
+
+        has_historical = any(re.search(rf"\b{re.escape(w)}\b", q) for w in historical_terms)
+        has_current = any(re.search(rf"\b{re.escape(w)}\b", q) for w in current_terms)
+
+        if has_historical and has_current:
+            return "both"
+        if has_historical:
+            return "historical"
+        if has_current:
+            return "current"
+
+        if "vvitu" in q:
+            return "current"
+
+        return "both"
+
+    def _get_fallback_sources_for_query(self, query: str) -> Tuple[List[str], List[Dict]]:
+        """Return period-appropriate default sources when local index yields no chunks."""
+        period = self._detect_query_period(query)
+        curr_url = self.settings.current_university_url
+        leg_url = self.settings.legacy_institute_url
+        if period == "current":
+            sources = [curr_url]
+            structured = [{
+                "title": "VVITU Official Website (Current)",
+                "url": curr_url,
+                "type": "website_current",
+                "period_label": "VVITU Official Website — Current",
+            }]
+        elif period == "historical":
+            sources = [leg_url]
+            structured = [{
+                "title": "VVIT Legacy Website (Historical)",
+                "url": leg_url,
+                "type": "website_historical",
+                "period_label": "VVIT Legacy Website — Historical",
+            }]
+        else:
+            sources = [curr_url, leg_url]
+            structured = [
+                {
+                    "title": "VVITU Official Website (Current)",
+                    "url": curr_url,
+                    "type": "website_current",
+                    "period_label": "VVITU Official Website — Current",
+                },
+                {
+                    "title": "VVIT Legacy Website (Historical)",
+                    "url": leg_url,
+                    "type": "website_historical",
+                    "period_label": "VVIT Legacy Website — Historical",
+                },
+            ]
+        return sources, structured
+
+    @classmethod
+    def _handle_direct_institutional_query(cls, query: str) -> Optional[RAGResponse]:
+        """
+        Direct deterministic response handler for core identity and official website questions.
+        Guarantees 100% accurate, authoritative institutional era routing with zero hallucination.
+        """
+        q = query.strip().lower().rstrip("?.! ")
+
+        # 1. VAIT Identity Questions
+        if cls._is_identity_query(query):
+            reply = (
+                "**VAIT Identity**\n\n"
+                "My name is VAIT, which stands for **VVIT's Artificial Intelligence Technology**. "
+                "I am the official institutional AI assistant for **VVIT University (VVITU)** and the legacy **Vasireddy Venkatadri Institute of Technology (VVIT)**.\n\n"
+                "**Institutional Structure & Official Sources:**\n"
+                "• **Current University:** VVIT University (VVITU) — Primary source for current academic programs, administration, calendar, and regulations.\n"
+                "• **Legacy Institute:** Vasireddy Venkatadri Institute of Technology (VVIT) — Historical source for past institutional records.\n"
+                "• **Core Purpose:** Providing authoritative, source-verified information grounded in official institutional documentation.\n\n"
+                "Source(s):\n"
+                "1. VVITU Official Website (Current) — https://vvitu.ac.in/\n"
+                "2. VVIT Legacy Website (Historical) — https://vvitguntur.com/"
+            )
+            return RAGResponse(
+                reply=reply,
+                sources=["https://vvitu.ac.in/", "https://vvitguntur.com/"],
+                structured_sources=[
+                    {
+                        "title": "VVITU Official Website (Current)",
+                        "url": "https://vvitu.ac.in/",
+                        "type": "website_current",
+                        "period_label": "VVITU Official Website — Current",
+                    },
+                    {
+                        "title": "VVIT Legacy Website (Historical)",
+                        "url": "https://vvitguntur.com/",
+                        "type": "website_historical",
+                        "period_label": "VVIT Legacy Website — Historical",
+                    },
+                ],
+                confidence="High",
+                retrieval_score=1.0,
+                is_refusal=False,
+                intent="general",
+            )
+
+        # 2. Current Official Website Questions
+        current_site_patterns = [
+            r"^what is the current official website\??$",
+            r"^what is the official website\??$",
+            r"^what is the current website\??$",
+            r"^what is the official site\??$",
+            r"^what is the official website of vvitu\??$",
+            r"^what is the website of vvitu\??$",
+            r"^what is vvitu('s)? website\??$",
+            r"^current official website\??$",
+            r"^official website\??$",
+            r"^vvitu official website\??$",
+            r"^current university website\??$",
+            r"^what is the current university website\??$",
+        ]
+        if any(re.search(p, q, re.IGNORECASE) for p in current_site_patterns):
+            reply = (
+                "**Current Official Website**\n\n"
+                "The current official website of **VVIT University (VVITU)** is:\n"
+                "**https://vvitu.ac.in/**\n\n"
+                "**Institutional Context:**\n"
+                "• **Current University (VVITU):** https://vvitu.ac.in/ is the primary and authoritative portal for all current university affairs, admissions, active academic calendars, examinations, and official notices.\n"
+                "• **Legacy Institute (VVIT):** The former institute portal (https://vvitguntur.com/) is preserved as a historical and legacy reference for older institutional records. It is not the current website of VVITU.\n\n"
+                "Source(s):\n"
+                "1. VVITU Official Website (Current) — https://vvitu.ac.in/\n"
+                "2. VVIT Legacy Website (Historical) — https://vvitguntur.com/"
+            )
+            return RAGResponse(
+                reply=reply,
+                sources=["https://vvitu.ac.in/", "https://vvitguntur.com/"],
+                structured_sources=[
+                    {
+                        "title": "VVITU Official Website (Current)",
+                        "url": "https://vvitu.ac.in/",
+                        "type": "website_current",
+                        "period_label": "VVITU Official Website — Current",
+                    },
+                    {
+                        "title": "VVIT Legacy Website (Historical)",
+                        "url": "https://vvitguntur.com/",
+                        "type": "website_historical",
+                        "period_label": "VVIT Legacy Website — Historical",
+                    },
+                ],
+                confidence="High",
+                retrieval_score=1.0,
+                is_refusal=False,
+                intent="general",
+            )
+
+        # 3. Old / Legacy VVIT Website Questions
+        legacy_site_patterns = [
+            r"^what was the old vvit website\??$",
+            r"^what was the old website\??$",
+            r"^what is the old website\??$",
+            r"^what is the old vvit website\??$",
+            r"^what is the legacy website\??$",
+            r"^what was the legacy website\??$",
+            r"^what was the legacy vvit website\??$",
+            r"^what is the legacy vvit website\??$",
+            r"^old vvit website\??$",
+            r"^legacy vvit website\??$",
+            r"^old website\??$",
+            r"^legacy website\??$",
+        ]
+        if any(re.search(p, q, re.IGNORECASE) for p in legacy_site_patterns):
+            reply = (
+                "**Legacy VVIT Website**\n\n"
+                "The legacy website for **Vasireddy Venkatadri Institute of Technology (VVIT)** is:\n"
+                "**https://vvitguntur.com/**\n\n"
+                "**Institutional Period Details:**\n"
+                "• **Legacy VVIT Institute:** https://vvitguntur.com/ reflects the older VVIT institute era, containing archival academic information, historical records, and earlier regulations.\n"
+                "• **Current University (VVITU):** The institution has transitioned to university status as VVIT University (VVITU). The current official portal is **https://vvitu.ac.in/**.\n\n"
+                "Source(s):\n"
+                "1. VVIT Legacy Website (Historical) — https://vvitguntur.com/\n"
+                "2. VVITU Official Website (Current) — https://vvitu.ac.in/"
+            )
+            return RAGResponse(
+                reply=reply,
+                sources=["https://vvitguntur.com/", "https://vvitu.ac.in/"],
+                structured_sources=[
+                    {
+                        "title": "VVIT Legacy Website (Historical)",
+                        "url": "https://vvitguntur.com/",
+                        "type": "website_historical",
+                        "period_label": "VVIT Legacy Website — Historical",
+                    },
+                    {
+                        "title": "VVITU Official Website (Current)",
+                        "url": "https://vvitu.ac.in/",
+                        "type": "website_current",
+                        "period_label": "VVITU Official Website — Current",
+                    },
+                ],
+                confidence="High",
+                retrieval_score=1.0,
+                is_refusal=False,
+                intent="general",
+            )
+
+        return None
+
+    @staticmethod
     def _is_dynamic_query(query: str) -> bool:
         """Return True when a query asks for latest/current updates."""
         q = query.lower()
@@ -350,10 +576,12 @@ class RAGService:
         Infer source tier when explicit metadata is missing.
 
         Priority order:
-          1. primary_official (official VVIT/VVITU websites and institutional docs)
-          2. secondary_linkedin (LinkedIn sources)
-          3. tertiary_social (Instagram/Twitter/Facebook/YouTube and other social)
-          4. related_web (extended web sources)
+          1. primary_official_current (current university website: vvitu.ac.in)
+          2. legacy_official_vvit (legacy institute website: vvitguntur.com)
+          3. primary_official (official documents: regulations/syllabi)
+          4. secondary_linkedin (LinkedIn sources)
+          5. tertiary_social (Instagram/Twitter/Facebook/YouTube and other social)
+          6. related_web (extended web sources)
         """
         explicit = str(metadata.get("source_tier", "")).strip().lower()
         if explicit in SOURCE_TIER_BOOST:
@@ -363,6 +591,12 @@ class RAGService:
         source_type = str(metadata.get("source_type", "")).lower()
         document_type = str(metadata.get("document_type", "")).lower()
         platform = str(metadata.get("platform", "")).lower()
+
+        if any(domain in url for domain in CURRENT_UNIVERSITY_DOMAINS):
+            return "primary_official_current"
+
+        if any(domain in url for domain in LEGACY_INSTITUTE_DOMAINS):
+            return "legacy_official_vvit"
 
         if any(domain in url for domain in OFFICIAL_DOMAINS):
             return "primary_official"
@@ -452,35 +686,11 @@ class RAGService:
                 cached.performance["cache_hit"] = True
             return cached
 
-        # ── Check Identity Query ─────────────────────────────────────
-        if self._is_identity_query(message):
-            reply = (
-                "**VAIT Identity**\n\n"
-                "My name is VAIT, which stands for VVIT's Artificial Intelligence Technology. "
-                "I am the official institutional AI assistant for Vasireddy Venkatadri Institute of Technology (VVIT) and VVIT University (VVITU).\n\n"
-                "**Key Information:**\n"
-                "• **Full Name:** VVIT's Artificial Intelligence Technology\n"
-                "• **Institution:** Vasireddy Venkatadri Institute of Technology (VVIT)\n"
-                "• **Role:** Institutional academic, examinations, admissions, and campus intelligence assistant\n"
-                "• **Verification:** Answers are strictly grounded in verified institutional records and official documents\n\n"
-                "Source(s):\n"
-                "1. VVIT Official Portal — https://www.vvitguntur.com/"
-            )
-            response = RAGResponse(
-                reply=reply,
-                sources=["https://www.vvitguntur.com/"],
-                structured_sources=[{
-                    "title": "VVIT Official Portal",
-                    "url": "https://www.vvitguntur.com/",
-                    "type": "website",
-                }],
-                confidence="High",
-                retrieval_score=1.0,
-                is_refusal=False,
-                intent="general",
-            )
-            self._cache_put(message, response)
-            return response
+        # ── Direct Institutional / Website / Identity Handler ────────
+        direct_resp = self._handle_direct_institutional_query(message)
+        if direct_resp is not None:
+            self._cache_put(message, direct_resp)
+            return direct_resp
 
         # ── Classify intent ──────────────────────────────────────────
         intent, matched_keywords = self.classify_intent(message)
@@ -556,8 +766,7 @@ class RAGService:
             confidence = self._compute_confidence_adjusted(top_adjusted)
         else:
             context = ""
-            sources = []
-            structured_sources = []
+            sources, structured_sources = self._get_fallback_sources_for_query(message)
             final_prompt = self._build_llm_only_prompt(query=message)
             confidence = "Low"
 
@@ -666,6 +875,13 @@ class RAGService:
             yield f'data: {json.dumps({"type": "error", "error": "Your query exceeds the maximum length."})}\n\n'
             return
 
+        # ── Direct Institutional / Website / Identity Handler ────────
+        direct_resp = self._handle_direct_institutional_query(message)
+        if direct_resp is not None:
+            yield f'data: {json.dumps({"type": "token", "content": direct_resp.reply})}\n\n'
+            yield f'data: {json.dumps({"type": "done", "reply": direct_resp.reply, "sources": direct_resp.sources, "structured_sources": direct_resp.structured_sources, "confidence": direct_resp.confidence})}\n\n'
+            return
+
         intent, matched_keywords = self.classify_intent(message)
 
         retrieval_empty = False
@@ -719,8 +935,7 @@ class RAGService:
             confidence = self._compute_confidence_adjusted(top_adjusted)
         else:
             context = ""
-            sources = []
-            structured_sources = []
+            sources, structured_sources = self._get_fallback_sources_for_query(message)
             final_prompt = self._build_llm_only_prompt(query=message)
             confidence = "Low"
 
@@ -806,14 +1021,40 @@ class RAGService:
                 url = page.get("url", "")
                 title = page.get("title") or url or "Official website"
                 documents.append({"content": text, "name": title})
+                url_lower = url.lower()
+                is_vvitu = any(d in url_lower for d in CURRENT_UNIVERSITY_DOMAINS)
+                is_vvit_legacy = any(d in url_lower for d in LEGACY_INSTITUTE_DOMAINS)
+
+                if is_vvitu:
+                    period = "current"
+                    tier = "primary_official_current"
+                    doc_type = "official_website_current"
+                    source_label = "VVITU Official Website (Current)"
+                    identity = "VVITU (Current University)"
+                elif is_vvit_legacy:
+                    period = "historical"
+                    tier = "legacy_official_vvit"
+                    doc_type = "legacy_website"
+                    source_label = "VVIT Legacy Website (Historical)"
+                    identity = "VVIT (Legacy Institute)"
+                else:
+                    period = "general"
+                    tier = "primary_official"
+                    doc_type = "official_website"
+                    source_label = "Official Website"
+                    identity = "Institutional Source"
+
                 metadata.append(
                     {
-                        "document_type": "official_website",
-                        "academic_year": "current",
+                        "document_type": doc_type,
+                        "academic_year": "current" if period == "current" else "historical",
                         "department": "General",
-                        "authority_level": page.get("authority_level", "medium"),
+                        "authority_level": page.get("authority_level", "high" if is_vvitu else "medium"),
                         "source_type": "website",
-                        "source_tier": "primary_official",
+                        "source_tier": tier,
+                        "institutional_period": period,
+                        "institutional_identity": identity,
+                        "source_label": source_label,
                         "url": url,
                         "source_file": url,
                     }
@@ -989,6 +1230,7 @@ class RAGService:
         """
         intent_boosts = cls.INTENT_SOURCE_BOOST.get(intent, {})
         dynamic_query = cls._is_dynamic_query(query)
+        query_period = cls._detect_query_period(query)
 
         for c in chunks:
             multiplier = AUTHORITY_MULTIPLIER.get(c.authority_level, 1.0)
@@ -1004,7 +1246,28 @@ class RAGService:
             # Base source weighting
             boost += SOURCE_TIER_BOOST.get(source_tier, 0.0)
 
-            if doc_type == "official_website" or source_tier == "primary_official":
+            url = (c.url or c.metadata.get("url", "")).lower()
+            is_vvitu = any(d in url for d in CURRENT_UNIVERSITY_DOMAINS)
+            is_vvit_legacy = any(d in url for d in LEGACY_INSTITUTE_DOMAINS)
+
+            # Period-aware institutional weighting
+            if query_period == "current":
+                if is_vvitu:
+                    boost += 0.08
+                elif is_vvit_legacy:
+                    boost += 0.01
+            elif query_period == "historical":
+                if is_vvit_legacy:
+                    boost += 0.08
+                elif is_vvitu:
+                    boost += 0.02
+            else:  # "both" or general
+                if is_vvitu:
+                    boost += 0.06
+                elif is_vvit_legacy:
+                    boost += 0.04
+
+            if doc_type in {"official_website", "official_website_current"} or source_tier in {"primary_official", "primary_official_current"}:
                 boost += 0.03
             if src_type == "pdf":
                 boost += 0.05
@@ -1188,12 +1451,18 @@ class RAGService:
             f"{context}\n\n"
             "USER QUESTION:\n"
             f"{query}\n\n"
-            "INSTRUCTIONS:\n"
+            "INSTRUCTIONS & DUAL-SOURCE RECONCILIATION RULES:\n"
             "1. Answer ONLY from CONTEXT.\n"
-            "2. Prefer evidence in this order: primary_official > secondary_linkedin > tertiary_social > related_web.\n"
-            "3. If multiple sources conflict, prioritize the higher-order source and mention the conflict briefly.\n"
-            "4. If information is unclear or unavailable, rely on your best knowledge or state clearly that the specific institutional details are not available.\n"
-            "5. Keep the response concise, student-friendly, and structured with title, explanation, key points, and sources."
+            "2. Understand the institutional transition:\n"
+            "   - VVITU (vvitu.ac.in) is the CURRENT university identity.\n"
+            "   - VVIT (vvitguntur.com) is the LEGACY institute identity.\n"
+            "3. Source Priority & Conflict Resolution:\n"
+            "   - For questions about CURRENT facts (current programs, current principal/leadership, current calendar, current fees/regulations): Current VVITU sources (vvitu.ac.in) ALWAYS take precedence.\n"
+            "   - For questions about HISTORICAL facts (past syllabus, older regulations, legacy records): Legacy VVIT sources (vvitguntur.com) represent the older period.\n"
+            "   - If both sources are present, do not randomly choose between them: explain the transition from VVIT to VVITU and specify which era each fact belongs to.\n"
+            "4. NEVER describe vvitguntur.com as the current official website of VVITU.\n"
+            "5. If information is unclear or unavailable, state clearly that the specific institutional details are not available.\n"
+            "6. Keep the response concise, student-friendly, and structured with title, explanation, key points, and sources."
         )
 
     @staticmethod
@@ -1202,21 +1471,30 @@ class RAGService:
         return (
             "USER QUESTION:\n"
             f"{query}\n\n"
-            "INSTRUCTIONS:\n"
-            "1. Answer the user's question directly based on your knowledge and core identity.\n"
-            "2. If asked about your identity or what VAIT stands for, always identify yourself as: 'My name is VAIT, which stands for VVIT\\'s Artificial Intelligence Technology.'\n"
-            "3. Keep the response concise, student-friendly, and cleanly structured."
+            "INSTRUCTIONS & DUAL-SOURCE RULES:\n"
+            "1. Answer the user's question directly based on your knowledge and institutional transition rules:\n"
+            "   - VVITU (https://vvitu.ac.in/) is the CURRENT university and primary source for current information.\n"
+            "   - VVIT (https://vvitguntur.com/) is the LEGACY institute and source for historical information.\n"
+            "   - VAIT stands for VVIT's Artificial Intelligence Technology.\n"
+            "2. If asked about the current official website, cite https://vvitu.ac.in/.\n"
+            "3. If asked about the old VVIT website, cite https://vvitguntur.com/.\n"
+            "4. For current matters, prioritize VVITU. For historical matters, use legacy VVIT.\n"
+            "5. Keep the response concise, student-friendly, and cleanly structured."
         )
 
     @staticmethod
     def _format_metadata(metadata: Dict) -> str:
         """Format metadata fields for context display."""
         fields = [
+            "source_label",
+            "institutional_period",
+            "institutional_identity",
             "document_type",
             "academic_year",
             "department",
             "authority_level",
             "source_tier",
+            "url",
         ]
         parts = [f"{f}={metadata[f]}" for f in fields if f in metadata]
         return ", ".join(parts)
@@ -1280,8 +1558,8 @@ class RAGService:
 
         Format:
             Source(s):
-            1. Title — URL
-            2. Title — URL
+            1. Title [VVITU Official Website — Current] — URL
+            2. Title [VVIT Legacy Website — Historical] — URL
 
         Clickable, frontend-ready.
         """
@@ -1300,10 +1578,13 @@ class RAGService:
         for i, src in enumerate(structured_sources, 1):
             title = src.get("title", "Unknown")
             url = src.get("url", "")
+            period_label = src.get("period_label", "")
+
+            label_suffix = f" [{period_label}]" if period_label and period_label.lower() not in title.lower() else ""
             if url:
-                lines.append(f"{i}. {title} — {url}")
+                lines.append(f"{i}. {title}{label_suffix} — {url}")
             else:
-                lines.append(f"{i}. {title}")
+                lines.append(f"{i}. {title}{label_suffix}")
 
         return cleaned + "\n".join(lines)
 
@@ -1438,13 +1719,12 @@ class RAGService:
     @staticmethod
     def _build_structured_sources(chunks: List[RetrievedChunk]) -> List[Dict]:
         """
-        Build structured source objects from qualified chunks.
+        Build structured source objects from qualified chunks with era labeling.
 
         Each source returned as:
-          { "title": "...", "url": "...", "type": "website" }
+          { "title": "...", "url": "...", "type": "...", "period_label": "..." }
 
         Deduplicates by URL (or title if URL missing).
-        If URL exists in metadata, it is always included.
         """
         seen_keys: set = set()
         sources: List[Dict] = []
@@ -1452,22 +1732,34 @@ class RAGService:
         for c in chunks:
             url = c.url or c.metadata.get("url", "")
             title = c.document_name or c.metadata.get("document_name", "Unknown")
+            url_lower = url.lower()
 
-            # Determine the source type label
-            source_type = c.source_type or c.metadata.get("source_type", "")
-            doc_type = c.document_type or c.metadata.get("document_type", "")
-            source_tier = c.source_tier or c.metadata.get("source_tier", "")
+            is_vvitu = any(d in url_lower for d in CURRENT_UNIVERSITY_DOMAINS)
+            is_vvit_legacy = any(d in url_lower for d in LEGACY_INSTITUTE_DOMAINS)
 
-            if source_tier == "secondary_linkedin":
-                type_label = "linkedin"
-            elif source_tier == "tertiary_social" or source_type == "social_media":
-                type_label = "social_media"
-            elif source_tier == "primary_official" or doc_type == "official_website" or source_type == "website":
-                type_label = "website"
-            elif source_type == "pdf" or doc_type in ("regulation", "syllabus"):
-                type_label = "pdf"
+            if is_vvitu:
+                period_label = "VVITU Official Website — Current"
+                institutional_period = "current"
+                type_label = "website_current"
+            elif is_vvit_legacy:
+                period_label = "VVIT Legacy Website — Historical"
+                institutional_period = "historical"
+                type_label = "website_historical"
             else:
-                type_label = doc_type or source_type or "document"
+                period_label = c.metadata.get("source_label", "")
+                institutional_period = c.metadata.get("institutional_period", "general")
+                source_type = c.source_type or c.metadata.get("source_type", "")
+                doc_type = c.document_type or c.metadata.get("document_type", "")
+                source_tier = c.source_tier or c.metadata.get("source_tier", "")
+
+                if source_tier == "secondary_linkedin":
+                    type_label = "linkedin"
+                elif source_tier == "tertiary_social" or source_type == "social_media":
+                    type_label = "social_media"
+                elif source_type == "pdf" or doc_type in ("regulation", "syllabus"):
+                    type_label = "pdf"
+                else:
+                    type_label = doc_type or source_type or "document"
 
             # Dedup key: prefer URL, fall back to title
             dedup_key = url if url else title
@@ -1475,7 +1767,13 @@ class RAGService:
                 continue
             seen_keys.add(dedup_key)
 
-            source_obj = {"title": title, "url": url, "type": type_label}
+            source_obj = {
+                "title": title,
+                "url": url,
+                "type": type_label,
+                "period_label": period_label,
+                "institutional_period": institutional_period,
+            }
             sources.append(source_obj)
 
         return sources
@@ -1525,22 +1823,26 @@ class RAGService:
 
         return (
             "You are VAIT (VVIT's Artificial Intelligence Technology), the official institutional AI "
-            "assistant for Vasireddy Venkatadri Institute of Technology (VVIT) and VVIT University (VVITU).\n\n"
+            "assistant for VVIT University (VVITU) and the legacy Vasireddy Venkatadri Institute of Technology (VVIT).\n\n"
             "CORE IDENTITY:\n"
             "- Your name is VAIT, which stands for VVIT's Artificial Intelligence Technology.\n"
             "- When asked 'What is your name?', 'Who are you?', 'What does VAIT stand for?', 'What is VAIT?', or 'Tell me about yourself', you must state clearly:\n"
-            "  'My name is VAIT, which stands for VVIT's Artificial Intelligence Technology. I am the official institutional AI assistant for Vasireddy Venkatadri Institute of Technology (VVIT).'\n"
-            "- You must NEVER use or introduce any alternative expansion for VAIT. The only official expansion is 'VVIT's Artificial Intelligence Technology'.\n\n"
+            "  'My name is VAIT, which stands for VVIT's Artificial Intelligence Technology. I am the official institutional AI assistant for VVIT University (VVITU) and the legacy Vasireddy Venkatadri Institute of Technology (VVIT).'\n"
+            "- You must NEVER use or introduce any other expansion for VAIT. The one and only official expansion is 'VVIT's Artificial Intelligence Technology'.\n\n"
+            "INSTITUTIONAL RELATIONSHIP & SOURCE STRATEGY:\n"
+            "- CURRENT UNIVERSITY (VVITU): https://vvitu.ac.in/ is the primary source for all current information.\n"
+            "- LEGACY INSTITUTE (VVIT): https://vvitguntur.com/ is a historical source for past records. Never call it the current website of VVITU.\n"
+            "- If conflicting information appears, prefer current VVITU for current queries and legacy VVIT for historical queries.\n\n"
             "STRICT RULES:\n"
-            "1. Provide helpful AI responses to questions.\n"
-            "2. If institutional context is provided, prioritize it in this order: official VVIT/VVITU sources > LinkedIn > social > related web.\n"
-            "3. If no institutional context is available, answer from your general knowledge.\n"
-            "4. Be concise and student-friendly.\n\n"
+            "1. Provide helpful AI responses grounded in institutional context.\n"
+            "2. If institutional context is provided, prioritize it in this order: current VVITU sources > legacy VVIT sources > LinkedIn > social > related web.\n"
+            "3. If no institutional context is available, answer from your knowledge following institutional guidelines.\n"
+            "4. Be concise, student-friendly, and cite sources with their time period.\n\n"
             "RESPONSE STRUCTURE:\n"
             "1. Title (short, clear)\n"
             "2. Explanation (2-4 sentences)\n"
             "3. Key Points (bullet points)\n"
-            "4. Source(s) (only if context was provided)\n"
+            "4. Source(s) (with period indicated)\n"
         )
 
     async def add_documents(
@@ -1601,6 +1903,8 @@ class RAGService:
         embeddings = await self.embedding_service.get_embeddings(chunk_texts)
 
         faiss.normalize_L2(embeddings)
+        if self.index is None:
+            self._create_empty_index()
         self.index.add(embeddings)
         self.chunks.extend(all_chunks)
 

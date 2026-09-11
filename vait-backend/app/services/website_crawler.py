@@ -244,10 +244,10 @@ class WebsiteCrawler:
     Usage::
 
         crawler = WebsiteCrawler(
-            allowed_domains=["www.vvitguntur.com"],
+            allowed_domains=["vvitu.ac.in", "vvitguntur.com"],
             depth_limit=2,
         )
-        pages = crawler.crawl(["https://www.vvitguntur.com"])
+        pages = crawler.crawl(["https://www.vvitu.ac.in", "https://www.vvitguntur.com"])
     """
 
     def __init__(
