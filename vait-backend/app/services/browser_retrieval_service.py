@@ -22,13 +22,14 @@ Security & Guardrails:
 
 import asyncio
 import base64
+from datetime import datetime, timezone
 import ipaddress
 import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
-from urllib.parse import urlparse
+from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse, urljoin
 
 import httpx
 
@@ -113,7 +114,7 @@ def is_safe_official_url(url: str) -> bool:
 
 @dataclass
 class BrowserRenderResult:
-    """Represents the outcome of headless browser retrieval."""
+    """Represents the outcome of headless browser retrieval with full provenance."""
     url: str
     title: str
     text: str
@@ -124,6 +125,11 @@ class BrowserRenderResult:
     error: Optional[str] = None
     screenshot_b64: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    screenshot_used: bool = False
+    screenshot_scope: Optional[str] = None  # "element", "semantic_tiles", "viewport"
+    vision_provider: Optional[str] = None
+    vision_model: Optional[str] = None
+    extraction_timestamp: Optional[str] = None
 
 
 # =====================================================================
@@ -131,28 +137,30 @@ class BrowserRenderResult:
 # =====================================================================
 
 class VisionExtractor:
-    """Extracts factual text from webpage screenshots using multimodal LLMs."""
+    """Extracts factual text from webpage screenshots using multimodal LLMs with dual-model fallback."""
 
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
         self.endpoint = "https://openrouter.ai/api/v1/chat/completions"
-        self.model = "google/gemini-2.5-flash"
+        self.primary_provider = self.settings.vision_primary_provider
+        self.primary_model = self.settings.vision_primary_model
+        self.secondary_provider = self.settings.vision_secondary_provider
+        self.secondary_model = self.settings.vision_secondary_model
+        self.timeout = float(self.settings.vision_timeout_seconds)
+        self.retry_count = int(self.settings.vision_retry_count)
 
-    async def extract_from_image(self, image_bytes: bytes, query: str) -> Optional[str]:
-        """
-        Send image bytes to vision model and extract strictly facts answering *query*.
-        """
+    async def _call_model(self, model: str, b64_image: str, query: str) -> Optional[str]:
+        """Send base64 image to OpenRouter with query-answering prompt and retry."""
         if not self.settings.openrouter_api_key:
             logger.warning("Vision extraction skipped: OPENROUTER_API_KEY is not configured")
             return None
 
-        b64_image = base64.b64encode(image_bytes).decode("utf-8")
         prompt = (
             f"You are the official institutional document extractor for VVITU / VVIT.\n"
             f"Extract only verified, factual information visible in this webpage screenshot that answers:\n"
             f"QUESTION: {query}\n\n"
             f"RULES:\n"
-            f"1. Extract ONLY information explicitly visible in the image (e.g. name, designation, department, qualification, fees, dates, announcements).\n"
+            f"1. Extract ONLY information explicitly visible in the image (e.g. names, designations, departments, qualifications, fees, dates, announcements).\n"
             f"2. Do NOT invent, assume, or extrapolate unverified details.\n"
             f"3. If the requested information is not visible in the image, output exactly: 'The requested information is not visible on this page.'"
         )
@@ -162,7 +170,7 @@ class VisionExtractor:
             "Content-Type": "application/json",
         }
         payload = {
-            "model": self.model,
+            "model": model,
             "max_tokens": 800,
             "messages": [
                 {
@@ -175,28 +183,90 @@ class VisionExtractor:
             ],
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.post(self.endpoint, headers=headers, json=payload)
-                if response.status_code != 200:
-                    logger.warning("Vision API non-200 (%d): %s", response.status_code, response.text[:200])
-                    return None
+        for attempt in range(self.retry_count + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(self.endpoint, headers=headers, json=payload)
+                    if response.status_code != 200:
+                        logger.warning("Vision model %s attempt %d returned %d: %s", model, attempt + 1, response.status_code, response.text[:200])
+                        continue
 
-                data = response.json()
-                choices = data.get("choices") or []
-                if not choices:
-                    return None
+                    data = response.json()
+                    choices = data.get("choices") or []
+                    if not choices:
+                        continue
 
-                extracted = choices[0].get("message", {}).get("content", "").strip()
-                if not extracted or "not visible" in extracted.lower():
-                    return None
+                    extracted = choices[0].get("message", {}).get("content", "").strip()
+                    if not extracted or "not visible" in extracted.lower():
+                        return None
 
-                logger.info("Vision extraction succeeded (%d chars)", len(extracted))
-                return extracted
+                    return extracted
+            except Exception as exc:
+                logger.warning("Vision model %s attempt %d failed: %s", model, attempt + 1, exc)
 
-        except Exception as exc:
-            logger.warning("Vision extraction failed: %s", exc)
-            return None
+        return None
+
+    async def extract_from_image(self, image_bytes: bytes, query: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """
+        Send image bytes to vision model and extract facts answering query.
+        Returns: (extracted_text, provider, model_used)
+        """
+        if not self.settings.vision_enabled or not self.settings.openrouter_api_key:
+            return None, None, None
+
+        b64_image = base64.b64encode(image_bytes).decode("utf-8")
+
+        # Try primary model
+        primary_text = await self._call_model(self.primary_model, b64_image, query)
+        if primary_text:
+            logger.info("Vision extraction succeeded with primary model %s (%d chars)", self.primary_model, len(primary_text))
+            return primary_text, self.primary_provider, self.primary_model
+
+        # Fallback to secondary model if configured
+        if self.secondary_model and self.secondary_model != self.primary_model:
+            logger.info("Falling back to secondary vision model: %s", self.secondary_model)
+            secondary_text = await self._call_model(self.secondary_model, b64_image, query)
+            if secondary_text:
+                logger.info("Vision extraction succeeded with secondary model %s (%d chars)", self.secondary_model, len(secondary_text))
+                return secondary_text, self.secondary_provider, self.secondary_model
+
+        return None, None, None
+
+    async def extract_from_tiles(self, tiles_bytes: List[bytes], query: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """
+        Extract facts across multiple semantic tiles and merge/deduplicate lines.
+        Returns: (merged_text, provider, model_used)
+        """
+        if not tiles_bytes:
+            return None, None, None
+
+        extracted_parts = []
+        model_used = None
+        provider_used = None
+
+        max_tiles = min(len(tiles_bytes), self.settings.vision_max_tiles)
+        for i, tile_bytes in enumerate(tiles_bytes[:max_tiles]):
+            text, provider, model = await self.extract_from_image(tile_bytes, query)
+            if text:
+                extracted_parts.append(text)
+                model_used = model
+                provider_used = provider
+
+        if not extracted_parts:
+            return None, None, None
+
+        # Deduplicate lines across tiles
+        seen_lines = set()
+        merged_lines = []
+        for part in extracted_parts:
+            for line in part.splitlines():
+                norm = line.strip().lower()
+                if norm and norm not in seen_lines:
+                    seen_lines.add(norm)
+                    merged_lines.append(line.strip())
+
+        merged_text = "\n".join(merged_lines)
+        return merged_text, provider_used, model_used
 
 
 # =====================================================================
@@ -206,7 +276,7 @@ class VisionExtractor:
 class BrowserRetrievalService:
     """
     Singleton headless browser service for JavaScript-rendered official page retrieval.
-    Reuses browser context across requests to minimize overhead.
+    Reuses browser context across requests with semaphore-controlled concurrency.
     """
 
     def __init__(self, settings: Optional[Settings] = None):
@@ -214,7 +284,8 @@ class BrowserRetrievalService:
         self.vision_extractor = VisionExtractor(self.settings)
         self._playwright = None
         self._browser = None
-        self._lock = asyncio.Lock()
+        self._init_lock = asyncio.Lock()
+        self._semaphore = asyncio.Semaphore(self.settings.max_concurrent_browser_pages)
         self._available = True
 
     async def _ensure_browser(self):
@@ -222,47 +293,69 @@ class BrowserRetrievalService:
         if self._browser is not None and self._browser.is_connected():
             return self._browser
 
-        from playwright.async_api import async_playwright
-
-        if self._playwright is None:
-            self._playwright = await async_playwright().start()
-
-        # Try system Google Chrome first, then system Microsoft Edge, then bundled Chromium
-        launch_attempts = [
-            {"channel": "chrome"},
-            {"channel": "msedge"},
-            {},  # default bundled chromium
-        ]
-
-        for opts in launch_attempts:
-            try:
-                browser = await self._playwright.chromium.launch(
-                    headless=True,
-                    timeout=10000,
-                    **opts,
-                )
-                self._browser = browser
-                logger.info("Headless browser launched successfully with opts=%s", opts)
+        async with self._init_lock:
+            if self._browser is not None and self._browser.is_connected():
                 return self._browser
-            except Exception as exc:
-                logger.debug("Browser launch attempt failed with %s: %s", opts, exc)
 
-        logger.error("Could not launch any headless browser. Headless fallback will be disabled.")
-        self._available = False
-        return None
+            from playwright.async_api import async_playwright
+
+            if self._playwright is None:
+                self._playwright = await async_playwright().start()
+
+            # Try system Google Chrome first, then system Microsoft Edge, then bundled Chromium
+            launch_attempts = [
+                {"channel": "chrome"},
+                {"channel": "msedge"},
+                {},  # default bundled chromium
+            ]
+
+            for opts in launch_attempts:
+                try:
+                    browser = await self._playwright.chromium.launch(
+                        headless=True,
+                        timeout=10000,
+                        **opts,
+                    )
+                    self._browser = browser
+                    logger.info("Headless browser launched successfully with opts=%s", opts)
+                    return self._browser
+                except Exception as exc:
+                    logger.debug("Browser launch attempt failed with %s: %s", opts, exc)
+
+            logger.error("Could not launch any headless browser. Headless fallback will be disabled.")
+            self._available = False
+            return None
+
+    def _score_element(self, text: str, tag: str, class_name: str, query_terms: List[str]) -> int:
+        """Query-aware element scoring heuristic (generic across any institutional domain)."""
+        score = 0
+        text_lower = text.lower()
+        for term in query_terms:
+            if term in text_lower:
+                score += 3
+        if any(h in tag.lower() for h in ["h1", "h2", "h3", "h4"]):
+            score += 2
+        if any(k in class_name.lower() for k in ["card", "grid", "row", "item", "profile", "content"]):
+            score += 2
+        if len(text.strip()) > 50:
+            score += 1
+        return score
 
     async def render_page(
         self,
         url: str,
         query: Optional[str] = None,
         wait_selector: Optional[str] = None,
-        timeout_seconds: int = 15,
+        timeout_seconds: Optional[int] = None,
     ) -> BrowserRenderResult:
         """
         Headlessly navigate to an official page, execute JavaScript,
         and extract the rendered DOM text. If rendered DOM text is insufficient,
-        captures a screenshot and uses vision OCR.
+        captures targeted semantic tiles/screenshots and uses vision OCR.
         """
+        if timeout_seconds is None:
+            timeout_seconds = self.settings.browser_timeout_seconds
+
         if not is_safe_official_url(url):
             return BrowserRenderResult(
                 url=url,
@@ -273,7 +366,7 @@ class BrowserRetrievalService:
                 error="SSRF security violation: URL is not an approved official domain",
             )
 
-        async with self._lock:
+        async with self._semaphore:
             try:
                 browser = await self._ensure_browser()
                 if browser is None:
@@ -290,6 +383,19 @@ class BrowserRetrievalService:
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) VAIT-HeadlessBrowser/1.0",
                     viewport={"width": 1280, "height": 960},
                 )
+
+                # SSRF Protection: Intercept client-side redirects / navigations
+                async def _intercept_route(route):
+                    req = route.request
+                    if req.is_navigation_request():
+                        dest_url = req.url
+                        if not is_safe_official_url(dest_url):
+                            logger.warning("SSRF blocked: intercepted navigation to off-domain %s", dest_url)
+                            await route.abort("blockedbyclient")
+                            return
+                    await route.continue_()
+
+                await page.route("**/*", _intercept_route)
 
                 try:
                     # Navigate with domcontentloaded
@@ -314,7 +420,6 @@ class BrowserRetrievalService:
                     # ── Strategy A: Faculty Card Grid Extraction ─────────────────
                     faculty_links = await page.query_selector_all("a[href*='/faculty/']")
                     if faculty_links and len(faculty_links) >= 2:
-                        from urllib.parse import urljoin
                         extracted_faculty = []
                         for a in faculty_links:
                             try:
@@ -427,43 +532,144 @@ class BrowserRetrievalService:
                             entity_type=entity_type,
                             entities=entities,
                             metadata={"chars": len(clean_text), "entities_count": len(entities)},
+                            screenshot_used=False,
+                            extraction_timestamp=datetime.now(timezone.utc).isoformat(),
                         )
 
-                    # ── Tier 4: Screenshot + Vision Fallback ─────────────
-                    logger.info("DOM text insufficient (%d chars). Falling back to screenshot vision for %s", len(clean_text), url)
-                    screenshot_bytes = None
+                    # ── Tier 4: Query-Aware Semantic Screenshot + Vision Fallback ──
+                    logger.info("DOM text insufficient (%d chars). Triggering query-aware screenshot vision for %s", len(clean_text), url)
 
-                    # Try element screenshot first
-                    target_selectors = [wait_selector, "#root", "main", "article", ".container"]
-                    for sel in target_selectors:
-                        if sel:
-                            try:
-                                elem = await page.query_selector(sel)
-                                if elem:
-                                    screenshot_bytes = await elem.screenshot(type="png")
-                                    break
-                            except Exception:
-                                pass
+                    # Extract query terms for generic scoring
+                    query_terms = [t.lower() for t in re.findall(r"\w+", query or "") if len(t) > 3]
 
-                    # Fallback to viewport screenshot
-                    if not screenshot_bytes:
-                        screenshot_bytes = await page.screenshot(type="png", full_page=False)
+                    # Discover candidate regions and score them
+                    candidate_selectors = [
+                        wait_selector,
+                        "main",
+                        "article",
+                        "[class*='grid']",
+                        "[class*='list']",
+                        ".container",
+                        "#root",
+                    ]
+                    best_elem = None
+                    best_score = -1
+                    best_selector = None
 
-                    b64_str = base64.b64encode(screenshot_bytes).decode("utf-8") if screenshot_bytes else None
+                    for sel in candidate_selectors:
+                        if not sel:
+                            continue
+                        try:
+                            elems = await page.query_selector_all(sel)
+                            for elem in elems:
+                                tag_name = await elem.evaluate("el => el.tagName.toLowerCase()")
+                                cls_name = await elem.evaluate("el => el.className || ''")
+                                el_text = (await elem.inner_text()).strip()[:400]
+                                score = self._score_element(el_text, tag_name, cls_name, query_terms)
+                                if score > best_score:
+                                    best_score = score
+                                    best_elem = elem
+                                    best_selector = sel
+                        except Exception:
+                            pass
 
-                    if screenshot_bytes and query:
-                        vision_text = await self.vision_extractor.extract_from_image(screenshot_bytes, query)
-                        if vision_text:
-                            logger.info("Screenshot vision extraction succeeded for %s (%d chars)", url, len(vision_text))
-                            return BrowserRenderResult(
-                                url=url,
-                                title=title or "Official Portal",
-                                text=vision_text,
-                                method="headless_browser_screenshot",
-                                success=True,
-                                screenshot_b64=b64_str,
-                                metadata={"chars": len(vision_text)},
-                            )
+                    # Fallback element if none scored high
+                    if not best_elem:
+                        try:
+                            best_elem = await page.query_selector("#root") or await page.query_selector("body")
+                            best_selector = "#root"
+                        except Exception:
+                            pass
+
+                    screenshot_scope = "element"
+                    vision_text = None
+                    provider_used = None
+                    model_used = None
+
+                    if best_elem and query:
+                        try:
+                            bbox = await best_elem.bounding_box()
+                            elem_height = bbox["height"] if bbox else 0
+
+                            # Semantic tiling if element height exceeds max dimension (e.g. 1600px)
+                            max_dim = self.settings.vision_max_image_dimension
+                            if elem_height > max_dim:
+                                logger.info("Target element %s height is %.1fpx (> %dpx). Capturing semantic tiles.", best_selector, elem_height, max_dim)
+                                tiles_bytes = []
+                                # Attempt child items tiling
+                                child_cards = await best_elem.query_selector_all("> div, > article, > section, [class*='card'], tr")
+                                if child_cards and len(child_cards) >= 2:
+                                    screenshot_scope = "semantic_tiles"
+                                    # Collect tiles for child card groups up to max_tiles
+                                    max_tiles = min(len(child_cards), self.settings.vision_max_tiles)
+                                    for card in child_cards[:max_tiles]:
+                                        try:
+                                            c_bytes = await card.screenshot(type="png")
+                                            if c_bytes:
+                                                tiles_bytes.append(c_bytes)
+                                        except Exception:
+                                            pass
+
+                                if tiles_bytes:
+                                    vision_text, provider_used, model_used = await self.vision_extractor.extract_from_tiles(tiles_bytes, query)
+                                else:
+                                    # Viewport clip tiles fallback
+                                    screenshot_scope = "viewport_tiles"
+                                    num_slices = min(int(elem_height // max_dim) + 1, self.settings.vision_max_tiles)
+                                    for slice_idx in range(num_slices):
+                                        try:
+                                            y_offset = slice_idx * 800
+                                            s_bytes = await page.screenshot(
+                                                type="png",
+                                                clip={"x": 0, "y": y_offset, "width": 1280, "height": 800},
+                                            )
+                                            if s_bytes:
+                                                tiles_bytes.append(s_bytes)
+                                        except Exception:
+                                            pass
+                                    if tiles_bytes:
+                                        vision_text, provider_used, model_used = await self.vision_extractor.extract_from_tiles(tiles_bytes, query)
+                            else:
+                                # Element fits in single bounding box
+                                screenshot_scope = "element"
+                                s_bytes = await best_elem.screenshot(type="png")
+                                if s_bytes:
+                                    vision_text, provider_used, model_used = await self.vision_extractor.extract_from_image(s_bytes, query)
+
+                        except Exception as exc:
+                            logger.warning("Targeted element screenshot failed: %s. Falling back to viewport.", exc)
+
+                    # Viewport screenshot fallback if element screenshot failed
+                    if not vision_text and query:
+                        try:
+                            screenshot_scope = "viewport"
+                            s_bytes = await page.screenshot(type="png", full_page=False)
+                            if s_bytes:
+                                vision_text, provider_used, model_used = await self.vision_extractor.extract_from_image(s_bytes, query)
+                        except Exception as exc:
+                            logger.warning("Viewport screenshot fallback failed: %s", exc)
+
+                    if vision_text:
+                        logger.info("Screenshot vision extraction succeeded for %s (%d chars, model=%s)", url, len(vision_text), model_used)
+                        return BrowserRenderResult(
+                            url=url,
+                            title=title or "Official Portal",
+                            text=vision_text,
+                            method="headless_browser_screenshot",
+                            success=True,
+                            screenshot_used=True,
+                            screenshot_scope=screenshot_scope,
+                            vision_provider=provider_used,
+                            vision_model=model_used,
+                            screenshot_b64=None,  # Discard in-memory image buffer immediately to prevent heap bloat
+                            extraction_timestamp=datetime.now(timezone.utc).isoformat(),
+                            metadata={
+                                "chars": len(vision_text),
+                                "scope": screenshot_scope,
+                                "model": model_used,
+                                "provider": provider_used,
+                            },
+                        )
 
                     # If both DOM and vision failed to extract sufficient content,
                     # return direct_url_only so VAIT provides the direct clickable page link
@@ -473,6 +679,8 @@ class BrowserRetrievalService:
                         text=clean_text if len(clean_text) > 40 else "",
                         method="direct_url_only",
                         success=False,
+                        screenshot_used=False,
+                        extraction_timestamp=datetime.now(timezone.utc).isoformat(),
                         error="Content could not be reliably extracted; direct official page URL provided",
                     )
 
@@ -487,12 +695,14 @@ class BrowserRetrievalService:
                     text="",
                     method="direct_url_only",
                     success=False,
+                    screenshot_used=False,
+                    extraction_timestamp=datetime.now(timezone.utc).isoformat(),
                     error=str(exc),
                 )
 
     async def close(self):
         """Cleanly terminate the browser and Playwright process."""
-        async with self._lock:
+        async with self._init_lock:
             if self._browser:
                 try:
                     await self._browser.close()
@@ -517,3 +727,4 @@ def get_browser_retrieval_service() -> BrowserRetrievalService:
     if _browser_retrieval_service is None:
         _browser_retrieval_service = BrowserRetrievalService()
     return _browser_retrieval_service
+

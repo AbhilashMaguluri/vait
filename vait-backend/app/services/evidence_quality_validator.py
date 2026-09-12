@@ -50,7 +50,7 @@ class EvidenceQualityValidator:
         Validate that the content / entities satisfy the query's evidentiary expectations.
         Returns True if evidence is sufficient, False if it is an empty shell or failed placeholder.
         """
-        if not content or len(content.strip()) < 50:
+        if (not content or len(content.strip()) < 50) and not (entities and len(entities) > 0):
             return False
 
         # Reject explicit placeholder / extraction failure strings
@@ -102,5 +102,25 @@ class EvidenceQualityValidator:
             matches = sum(1 for t in fee_terms if t in content_lower)
             return matches >= 2
 
+        # ── COURSE / SYLLABUS VALIDATION ────────────────────────────
+        elif evidence_type == "course":
+            course_terms = ["course", "curriculum", "syllabus", "credit", "semester", "subject", "core", "elective", "b.tech", "m.tech"]
+            matches = sum(1 for t in course_terms if t in content_lower)
+            return matches >= 2
+
+        # ── NOTICE / CIRCULAR VALIDATION ────────────────────────────
+        elif evidence_type == "notice":
+            notice_terms = ["circular", "notification", "notice", "date", "order", "registrar", "university"]
+            matches = sum(1 for t in notice_terms if t in content_lower)
+            return matches >= 2
+
+        # ── ADMISSION VALIDATION ────────────────────────────────────
+        elif evidence_type == "admission":
+            admission_terms = ["admission", "eligibility", "intake", "seat", "eamcet", "program", "apply", "criteria"]
+            matches = sum(1 for t in admission_terms if t in content_lower)
+            return matches >= 2
+
         # ── GENERAL / OTHER ──────────────────────────────────────────
-        return len(content.strip()) >= 120
+        if retrieval_method == "headless_browser_screenshot":
+            return len(content.strip()) >= 40
+        return len(content.strip()) >= 80

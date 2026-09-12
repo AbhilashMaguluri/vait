@@ -83,8 +83,10 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
 **Design Principles:**
 - **Clean separation** — Routes → Controllers → Services
 - **Cloud-capable** — Groq primary with OpenRouter fallback
-- **Data sovereignty** — All documents and queries stay on institutional hardware
+- **Four-Tier Hybrid Retrieval** — Tier 1 FAISS RAG → Tier 2 Fast HTTP Fetch → Tier 3 Headless Browser DOM → Tier 4 Query-Aware Semantic Screenshot + Vision OCR (See [VAIT Architecture](vait-backend/VAIT_ARCHITECTURE.md) for full specification)
 - **Zero hallucination** — Strict retrieval threshold + authority hierarchy + refusal mechanism
+
+> 📖 **Canonical Architecture Specification**: For complete details on the four retrieval tiers, SSRF security model, semantic tiling, dual-model vision fallback, and deployment topology, see [`vait-backend/VAIT_ARCHITECTURE.md`](vait-backend/VAIT_ARCHITECTURE.md).
 
 ---
 

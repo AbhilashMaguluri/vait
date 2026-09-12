@@ -74,7 +74,7 @@ CACHE_TTL = 3600  # 1 hour
 
 @dataclass
 class OfficialWebResult:
-    """Represents a verified piece of content retrieved from official portals."""
+    """Represents a verified piece of content retrieved from official portals with complete provenance."""
     title: str
     url: str
     content: str
@@ -85,6 +85,11 @@ class OfficialWebResult:
     retrieval_method: str = "catalog"  # "catalog" | "http" | "headless_browser_dom" | "headless_browser_screenshot" | "direct_url_only"
     entities: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    screenshot_used: bool = False
+    screenshot_scope: Optional[str] = None
+    vision_provider: Optional[str] = None
+    vision_model: Optional[str] = None
+    extraction_timestamp: Optional[str] = None
 
     def to_structured_source(self) -> Dict[str, Any]:
         """Convert to structured source format expected by VAIT frontend."""
@@ -101,7 +106,7 @@ class OfficialWebResult:
             type_label = "website_current"
             institutional_period = "current"
 
-        return {
+        res = {
             "title": self.title,
             "url": self.url,
             "type": type_label,
@@ -109,31 +114,52 @@ class OfficialWebResult:
             "institutional_period": institutional_period,
             "retrieval_method": self.retrieval_method,
         }
+        if self.screenshot_used:
+            res["screenshot_used"] = True
+            if self.screenshot_scope:
+                res["screenshot_scope"] = self.screenshot_scope
+            if self.vision_provider:
+                res["vision_provider"] = self.vision_provider
+            if self.vision_model:
+                res["vision_model"] = self.vision_model
+            if self.extraction_timestamp:
+                res["extraction_timestamp"] = self.extraction_timestamp
+        return res
 
 
 # =====================================================================
-# IN-MEMORY TTL CACHE
+# IN-MEMORY TTL CACHE (CONTENT-AWARE)
 # =====================================================================
 
 class OfficialWebCache:
-    """Thread-safe, time-bounded query cache for web retrieval."""
+    """Thread-safe, time-bounded query cache for web retrieval with dynamic vs static TTL."""
 
-    def __init__(self, ttl: int = CACHE_TTL):
-        self.ttl = ttl
-        self._cache: Dict[str, Tuple[float, List[OfficialWebResult]]] = {}
+    def __init__(self, static_ttl: Optional[int] = None, dynamic_ttl: Optional[int] = None):
+        settings = get_settings()
+        self.static_ttl = static_ttl if static_ttl is not None else settings.cache_static_ttl_seconds
+        self.dynamic_ttl = dynamic_ttl if dynamic_ttl is not None else settings.cache_dynamic_ttl_seconds
+        self._cache: Dict[str, Tuple[float, float, List[OfficialWebResult]]] = {}
 
     def get(self, key: str) -> Optional[List[OfficialWebResult]]:
         norm_key = key.strip().lower()
         if norm_key in self._cache:
-            ts, results = self._cache[norm_key]
-            if time.time() - ts < self.ttl:
+            ts, ttl, results = self._cache[norm_key]
+            if time.time() - ts < ttl:
                 return results
             del self._cache[norm_key]
         return None
 
-    def set(self, key: str, results: List[OfficialWebResult]) -> None:
+    def set(self, key: str, results: List[OfficialWebResult], is_dynamic: Optional[bool] = None) -> None:
         norm_key = key.strip().lower()
-        self._cache[norm_key] = (time.time(), results)
+        if is_dynamic is None:
+            # Determine dynamically based on results
+            is_dynamic = any(
+                r.retrieval_method in ("headless_browser_dom", "headless_browser_screenshot", "http")
+                or any(k in r.url.lower() for k in ["notification", "exam", "result", "timetable", "career", "admission"])
+                for r in results
+            )
+        effective_ttl = self.dynamic_ttl if is_dynamic else self.static_ttl
+        self._cache[norm_key] = (time.time(), effective_ttl, results)
 
     def clear(self) -> None:
         self._cache.clear()
@@ -928,6 +954,11 @@ class OfficialWebRetriever:
                 retrieval_method=render_res.method,
                 entities=entities,
                 metadata={"chars": len(render_res.text), "entities_count": len(entities)},
+                screenshot_used=getattr(render_res, "screenshot_used", False),
+                screenshot_scope=getattr(render_res, "screenshot_scope", None),
+                vision_provider=getattr(render_res, "vision_provider", None),
+                vision_model=getattr(render_res, "vision_model", None),
+                extraction_timestamp=getattr(render_res, "extraction_timestamp", None),
             )
 
         # If live browser failed, timed out, or extracted 0 entities for a faculty page:

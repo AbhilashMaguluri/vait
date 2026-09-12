@@ -90,6 +90,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "VAIT — VVIT's Artificial Intelligence Technology"
@@ -182,6 +183,25 @@ class Settings(BaseSettings):
     auto_ingest_official_sites_on_empty: bool = True
     official_bootstrap_depth_limit: int = 1
     official_bootstrap_max_pages: int = 24
+
+    # ── Browser & Vision (Tier 3 & Tier 4) ───────────────────────────
+    vision_enabled: bool = Field(default=True, alias="VISION_ENABLED")
+    vision_primary_provider: str = Field(default="openrouter", alias="VISION_PRIMARY_PROVIDER")
+    vision_primary_model: str = Field(default="google/gemini-2.5-flash", alias="VISION_PRIMARY_MODEL")
+    vision_secondary_provider: str = Field(default="openrouter", alias="VISION_SECONDARY_PROVIDER")
+    vision_secondary_model: str = Field(default="meta-llama/llama-3.2-11b-vision-instruct", alias="VISION_SECONDARY_MODEL")
+    vision_timeout_seconds: float = Field(default=20.0, alias="VISION_TIMEOUT")
+    vision_max_image_bytes: int = Field(default=3 * 1024 * 1024, alias="VISION_MAX_IMAGE_BYTES")
+    vision_max_image_dimension: int = Field(default=1600, alias="VISION_MAX_IMAGE_DIMENSION")
+    vision_max_tiles: int = Field(default=3, alias="VISION_MAX_TILES")
+    vision_retry_count: int = Field(default=1, alias="VISION_RETRY_COUNT")
+
+    max_concurrent_browser_pages: int = Field(default=3, alias="MAX_CONCURRENT_BROWSER_PAGES")
+    browser_timeout_seconds: int = Field(default=15, alias="BROWSER_TIMEOUT_SECONDS")
+
+    # ── Source-Aware Cache TTLs ──────────────────────────────────────
+    cache_static_ttl_seconds: int = Field(default=7200, alias="CACHE_STATIC_TTL_SECONDS")
+    cache_dynamic_ttl_seconds: int = Field(default=600, alias="CACHE_DYNAMIC_TTL_SECONDS")
 
     auto_reindex_on_startup: bool = False
     auto_watch_enabled: bool = False

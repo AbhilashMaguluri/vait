@@ -238,12 +238,35 @@ For VAIT's use-case — infrequent batch ingestion with high-frequency reads —
 
 ---
 
+## Phase 4 — Multi-Tier Web Retrieval & Production Screenshot Architecture (September 2026)
+
+### What Was Built
+- **Four-Tier Hybrid Retrieval Pipeline**:
+  1. FAISS Vector RAG (0ms - 150ms)
+  2. Fast HTTP Retrieval (150ms - 400ms)
+  3. Headless Chromium Rendered DOM (~1.5s - 4.0s)
+  4. Query-Aware Semantic Screenshot + Vision OCR Fallback (~3.0s - 5.0s)
+- **Production Screenshot Architecture Refinements**:
+  - Solved ~9,700px `#root` image degradation via query-aware element scoring and semantic tiling (up to 4 bounded tiles $\le 1600\text{px}$).
+  - Multi-model fallback: OpenRouter `google/gemini-2.5-flash` primary → `meta-llama/llama-3.2-11b-vision-instruct` secondary.
+  - Concurrency control: replaced single global lock with `asyncio.Semaphore(settings.max_concurrent_browser_pages)` and lifecycle lock `_init_lock`.
+  - Security: client-side navigation/redirect SSRF interception via Playwright `page.route("**/*")`.
+  - Memory & Cache: immediate discard of Base64 buffers post-OCR; content-aware cache TTL (static: 2h, dynamic: 10m).
+  - Cloud Deployment: added Docker container configuration with system dependencies and Render blueprint (`render.yaml`).
+- **Canonical Architecture Documentation**:
+  - Established `vait-backend/VAIT_ARCHITECTURE.md` as the authoritative specification.
+
+---
+
 ## File Reference
 
 ```
 vait-backend/
 ├── .env                            # Environment secrets
 ├── requirements.txt                # Python dependencies
+├── Dockerfile                      # Production container definition
+├── render.yaml                     # Render cloud deployment blueprint
+├── VAIT_ARCHITECTURE.md            # Canonical Architecture Specification
 ├── PROJECT_HISTORY.md              # This document
 ├── app/
 │   ├── main.py                     # FastAPI app factory + lifespan
@@ -253,35 +276,18 @@ vait-backend/
 │   │   ├── chat.py                 # Chat API endpoints
 │   │   └── admin.py                # Admin API endpoints
 │   ├── services/
-│   │   ├── embedding_service.py    # OpenAI embedding generation
-│   │   ├── llm_service.py          # OpenAI LLM generation
-│   │   └── rag_service.py          # Core RAG pipeline
+│   │   ├── embedding_service.py    # Embedding generation
+│   │   ├── llm_service.py          # LLM generation with fallback
+│   │   ├── rag_service.py          # Core RAG pipeline
+│   │   ├── browser_retrieval_service.py # Headless browser & vision OCR
+│   │   ├── official_web_retriever.py    # Official web discovery & caching
+│   │   └── evidence_quality_validator.py # Multi-domain evidence validation
 │   └── utils/
 │       ├── config.py               # Configuration + validation
 │       └── text_chunker.py         # Token-aware text chunking
-├── data/
-│   ├── raw_docs/                   # Input documents for ingestion
-│   ├── vector_store/
-│   │   ├── vait.index              # FAISS binary index
-│   │   └── metadata.json           # Chunk text + metadata
-│   └── logs/
-│       ├── query.log               # Structured query audit log
-│       ├── vait.log                # Application debug log
-│       └── ingestion.log           # Ingestion pipeline log
-├── knowledge/                      # Organised knowledge documents
-│   ├── academic-calendar/
-│   ├── departments/
-│   ├── examinations/
-│   ├── notices/
-│   ├── regulations/
-│   └── syllabus/
-├── prompts/
-│   └── vait_system_prompt.txt      # Hardened system prompt
-└── scripts/
-    └── ingest_documents.py         # Offline ingestion CLI
 ```
 
 ---
 
 *Document maintained as part of the VAIT project portfolio.*  
-*Last updated: February 2026*
+*Last updated: September 2026*

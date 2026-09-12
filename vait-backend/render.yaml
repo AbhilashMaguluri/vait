@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: vait-backend
+    env: python
+    region: oregon
+    plan: standard
+    buildCommand: "pip install -r requirements.txt && playwright install --with-deps chromium"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/.cache/ms-playwright
+      - key: ENVIRONMENT
+        value: production
+      - key: VISION_ENABLED
+        value: "true"
+      - key: VISION_PRIMARY_PROVIDER
+        value: openrouter
+      - key: VISION_PRIMARY_MODEL
+        value: google/gemini-2.5-flash
+      - key: VISION_SECONDARY_PROVIDER
+        value: openrouter
+      - key: VISION_SECONDARY_MODEL
+        value: meta-llama/llama-3.2-11b-vision-instruct
+      - key: MAX_CONCURRENT_BROWSER_PAGES
+        value: "3"

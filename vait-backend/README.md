@@ -19,6 +19,8 @@ VAIT is an institutional AI assistant that provides accurate information exclusi
   - **Secondary LinkedIn**: Official VVIT / VVITU updates
   - **Tertiary Social / Related Web**: Supporting records only
 
+> 📖 **Architecture Specification**: For the complete architectural blueprint covering the 4-tier retrieval pipeline, SSRF security model, semantic tiling, and cloud deployment, refer to [`VAIT_ARCHITECTURE.md`](VAIT_ARCHITECTURE.md).
+
 ---
 
 ## Tech Stack (Non-Negotiable)
