@@ -49,16 +49,27 @@ ALLOWED_DOMAINS = {
     "vvitguntur.com",
     "www.vvitguntur.com",
 }
+import httpx
 
-CURRENT_DOMAINS = {"vvitu.ac.in", "www.vvitu.ac.in"}
-LEGACY_DOMAINS = {"vvitguntur.com", "www.vvitguntur.com"}
+from app.services.browser_retrieval_service import (
+    BrowserRenderResult,
+    get_browser_retrieval_service,
+)
+from app.services.evidence_quality_validator import EvidenceQualityValidator
+from app.utils.config import Settings, get_settings
 
-REQUEST_TIMEOUT = 8  # seconds
+logger = logging.getLogger("vait.official_web")
+
+# Approved domain white-lists
+CURRENT_DOMAINS: Set[str] = {"vvitu.ac.in", "www.vvitu.ac.in"}
+LEGACY_DOMAINS: Set[str] = {"vvitguntur.com", "www.vvitguntur.com"}
+
+REQUEST_TIMEOUT = 10.0
 CACHE_TTL = 3600  # 1 hour
 
 
 # =====================================================================
-# DATA STRUCTURES
+# DATA CLASSES
 # =====================================================================
 
 @dataclass
@@ -72,6 +83,7 @@ class OfficialWebResult:
     confidence: float = 0.95
     entity_type: str = "general_page"  # "faculty" | "leadership" | "department" | "program" | "general_page"
     retrieval_method: str = "catalog"  # "catalog" | "http" | "headless_browser_dom" | "headless_browser_screenshot" | "direct_url_only"
+    entities: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_structured_source(self) -> Dict[str, Any]:
@@ -889,7 +901,15 @@ class OfficialWebRetriever:
 
         entity_type = "faculty" if "/faculty" in url else ("leadership" if "/leadership" in url else "general_page")
 
-        if render_res.success:
+        entities = getattr(render_res, "entities", [])
+        is_evidence_valid = render_res.success and EvidenceQualityValidator.validate_content(
+            query=query or "",
+            content=render_res.text,
+            entities=entities,
+            retrieval_method=render_res.method,
+        )
+
+        if is_evidence_valid:
             content = (
                 f"**{render_res.title}**\n"
                 f"• **Official URL:** {url}\n"
@@ -904,30 +924,72 @@ class OfficialWebRetriever:
                 period=period,
                 source_tier=tier,
                 confidence=0.96,
-                entity_type=entity_type,
+                entity_type=getattr(render_res, "entity_type", entity_type),
                 retrieval_method=render_res.method,
-                metadata={"chars": len(render_res.text)},
+                entities=entities,
+                metadata={"chars": len(render_res.text), "entities_count": len(entities)},
             )
-        else:
-            # Direct canonical URL fallback when extraction is incomplete
-            content = (
-                f"**Official Portal Page: {url}**\n"
-                f"• **Official URL:** {url}\n"
-                f"• **Institution:** {'VVIT University (VVITU)' if is_vvitu else 'Vasireddy Venkatadri Institute of Technology (VVIT)'}\n"
-                f"• **Status:** Content could not be automatically extracted from dynamic components.\n"
-                f"• **Action:** Direct page link verified and available."
-            )
-            return OfficialWebResult(
-                title="Official Portal Page",
-                url=url,
-                content=content,
-                period=period,
-                source_tier=tier,
-                confidence=0.85,
-                entity_type="general_page",
-                retrieval_method="direct_url_only",
-                metadata={"error": render_res.error},
-            )
+
+        # If live browser failed, timed out, or extracted 0 entities for a faculty page:
+        # Check if URL corresponds to an official department faculty directory
+        norm_url = url.rstrip("/")
+        for dept in self.departments_catalog:
+            if dept["url"].rstrip("/") == norm_url or norm_url.endswith(f"/{dept['slug']}"):
+                dept_faculty = [f for f in self.faculty_catalog if f.get("dept_slug") == dept["slug"]]
+                if dept_faculty:
+                    logger.info("Resolving department faculty from verified bundle catalog for %s (%d members)", dept["slug"], len(dept_faculty))
+                    cat_entities = [
+                        {
+                            "name": f["name"],
+                            "designation": f["designation"],
+                            "qualification": f["qualification"],
+                            "profile_url": f["url"],
+                        }
+                        for f in dept_faculty
+                    ]
+                    md_lines = [
+                        f"**VVITU Official Faculty Directory — {dept['name']}**",
+                        f"• **Official URL:** {dept['url']}",
+                        f"• **Institution:** VVIT University (VVITU)",
+                        f"• **Total Verified Faculty Listed:** {len(dept_faculty)}\n",
+                        "| S.No | Faculty Name | Designation | Qualification | Official Profile Link |",
+                        "|---|---|---|---|---|",
+                    ]
+                    for idx, f in enumerate(dept_faculty, 1):
+                        md_lines.append(f"| {idx} | **{f['name']}** | {f['designation']} | {f['qualification']} | [Profile]({f['url']}) |")
+                    content = "\n".join(md_lines)
+                    return OfficialWebResult(
+                        title=f"VVITU {dept['name']} Faculty Directory",
+                        url=dept["url"],
+                        content=content,
+                        period="current",
+                        source_tier="primary_official_current",
+                        confidence=0.98,
+                        entity_type="faculty_directory",
+                        retrieval_method="catalog",
+                        entities=cat_entities,
+                        metadata={"total_faculty": len(dept_faculty), "dept_slug": dept["slug"]},
+                    )
+
+        # Direct canonical URL fallback when extraction is incomplete
+        content = (
+            f"**Official Portal Page: {url}**\n"
+            f"• **Official URL:** {url}\n"
+            f"• **Institution:** {'VVIT University (VVITU)' if is_vvitu else 'Vasireddy Venkatadri Institute of Technology (VVIT)'}\n"
+            f"• **Status:** Content could not be automatically extracted from dynamic components.\n"
+            f"• **Action:** Direct page link verified and available."
+        )
+        return OfficialWebResult(
+            title="Official Portal Page",
+            url=url,
+            content=content,
+            period=period,
+            source_tier=tier,
+            confidence=0.85,
+            entity_type="general_page",
+            retrieval_method="direct_url_only",
+            metadata={"error": render_res.error},
+        )
 
     def is_safe_official_url(self, url: str) -> bool:
         """Validate that a URL is a safe official institutional URL and not SSRF attack."""
@@ -1306,7 +1368,9 @@ class OfficialWebRetriever:
 
             # If legacy query or no current results, search legacy
             q_lower = query.lower()
-            if not results or any(kw in q_lower for kw in ["vvit", "legacy", "history", "old", "jntuk", "autonomous"]):
+            has_faculty_dir = any(r.entity_type in ("faculty", "faculty_directory") and (len(r.entities) > 0 or "Faculty Directory" in r.title) for r in results)
+            has_historical_intent = any(kw in q_lower for kw in ["legacy", "history", "past", "former", "old", "earlier", "previous", "was", "archive", "archived"])
+            if not results or (has_historical_intent and not has_faculty_dir):
                 legacy_results = self.search_vvit_legacy(query)
                 results.extend(legacy_results)
                 if not legacy_results:
@@ -1327,7 +1391,13 @@ class OfficialWebRetriever:
                 seen_urls.add(r.url)
                 deduped.append(r)
 
-        final_results = deduped[:max_results]
+        # If a verified faculty directory is present, prioritize it and eliminate unrelated noisy pages
+        faculty_dirs = [r for r in deduped if r.entity_type in ("faculty", "faculty_directory") and (len(r.entities) > 0 or "Faculty Directory" in r.title)]
+        if faculty_dirs:
+            final_results = faculty_dirs[:1]
+        else:
+            final_results = deduped[:max_results]
+
         self.cache.set(f"{query}:{period}", final_results)
         return final_results
 

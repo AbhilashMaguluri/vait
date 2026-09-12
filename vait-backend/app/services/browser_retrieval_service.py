@@ -119,6 +119,8 @@ class BrowserRenderResult:
     text: str
     method: str  # "rendered_dom" | "screenshot_vision" | "direct_url_only" | "failed"
     success: bool
+    entity_type: str = "general_page"  # "faculty_directory" | "leadership" | "course" | "exam" | "general_page"
+    entities: List[Dict[str, Any]] = field(default_factory=list)
     error: Optional[str] = None
     screenshot_b64: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -305,6 +307,8 @@ class BrowserRetrievalService:
 
                     title = await page.title()
 
+                    entity_type = "general_page"
+                    entities = []
                     clean_text = ""
 
                     # ── Strategy A: Faculty Card Grid Extraction ─────────────────
@@ -327,6 +331,17 @@ class BrowserRetrievalService:
                                 pass
 
                         if extracted_faculty:
+                            entity_type = "faculty_directory"
+                            entities = [
+                                {
+                                    "name": fn,
+                                    "designation": fd,
+                                    "qualification": fq,
+                                    "profile_url": fp,
+                                }
+                                for (fn, fd, fq, fp) in extracted_faculty
+                            ]
+
                             # Search for department title
                             dept_title = ""
                             for h_sel in ["h1", "h2", "h3", "h4", "p"]:
@@ -399,17 +414,19 @@ class BrowserRetrievalService:
                         clean_text = ContentExtractor._normalise(rendered_text or "")
 
                     # ── Evaluate if DOM text is sufficient ────────────────
-                    is_dom_sufficient = len(clean_text) >= 120
+                    is_dom_sufficient = len(clean_text) >= 120 or len(entities) > 0
 
                     if is_dom_sufficient:
-                        logger.info("Rendered DOM extraction succeeded for %s (%d chars)", url, len(clean_text))
+                        logger.info("Rendered DOM extraction succeeded for %s (%d chars, %d entities)", url, len(clean_text), len(entities))
                         return BrowserRenderResult(
                             url=url,
                             title=title or "Official Portal",
                             text=clean_text,
                             method="headless_browser_dom",
                             success=True,
-                            metadata={"chars": len(clean_text)},
+                            entity_type=entity_type,
+                            entities=entities,
+                            metadata={"chars": len(clean_text), "entities_count": len(entities)},
                         )
 
                     # ── Tier 4: Screenshot + Vision Fallback ─────────────

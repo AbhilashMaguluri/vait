@@ -459,6 +459,122 @@ class RAGService:
                 official_urls.append(u_clean)
         return official_urls
 
+    def _detect_followup_faculty_context(self, message: str, history: Optional[list]) -> Optional[str]:
+        """
+        Detect if user message is an anaphoric follow-up (e.g. 'can u please fetch details about them',
+        'who is the hod?', 'tell me more about them') referring to a faculty department
+        previously discussed in conversation history.
+        """
+        if not history:
+            return None
+
+        msg_clean = message.lower().strip()
+        followup_cues = [
+            "them", "they", "their", "these", "those", "him", "her",
+            "details about them", "fetch details", "more details",
+            "qualifications", "designation", "who is the hod", "hod",
+            "head of department", "who are they", "tell me about them",
+            "give details", "fetch more", "what are their", "faculty list",
+            "about them",
+        ]
+        has_followup_cue = any(cue in msg_clean for cue in followup_cues)
+        if not has_followup_cue:
+            return None
+
+        faculty_url_pattern = re.compile(
+            r'https?://(?:www\.)?(?:vvitu\.ac\.in|vvitguntur\.com)/admissions/faculty/([a-zA-Z0-9_-]+)'
+        )
+
+        for turn in reversed(history):
+            content = ""
+            if isinstance(turn, dict):
+                content = turn.get("content", "") or ""
+            elif hasattr(turn, "content"):
+                content = getattr(turn, "content", "") or ""
+
+            match = faculty_url_pattern.search(content)
+            if match:
+                slug = match.group(1)
+                resolved = f"https://vvitu.ac.in/admissions/faculty/{slug}"
+                logger.info("Resolved follow-up query '%s' to faculty URL from history: %s", message, resolved)
+                return resolved
+
+            if hasattr(self, "web_retriever") and self.web_retriever:
+                routes = self.web_retriever._find_matching_routes(content)
+                for r in routes:
+                    if "/faculty/" in r.get("url", ""):
+                        logger.info("Resolved follow-up query '%s' to department route: %s", message, r["url"])
+                        return r["url"]
+
+        return None
+
+    def _build_grounded_evidence(
+        self,
+        query: str,
+        results: List[OfficialWebResult],
+    ) -> Tuple[str, str, List[str], List[Dict], str, str, str]:
+        """
+        Single unified evidence builder for official web retrieval results.
+        Enforces grounded facts, structured entity extraction, and authoritative formatting directives.
+        Returns:
+            (context, formatting_directive, sources, structured_sources, confidence, intent, response_type)
+        """
+        sources = [r.url for r in results]
+        structured_sources = [r.to_structured_source() for r in results]
+        confidence = "High"
+
+        has_faculty = any(
+            r.entity_type in ("faculty", "faculty_directory") or
+            len(getattr(r, "entities", [])) > 0 or
+            "faculty" in r.url.lower()
+            for r in results
+        )
+
+        all_direct_urls = all(r.retrieval_method == "direct_url_only" for r in results)
+
+        context_parts = []
+        total_faculty_entities = 0
+        for r in results:
+            entities = getattr(r, "entities", []) or []
+            if entities and r.entity_type in ("faculty", "faculty_directory"):
+                total_faculty_entities += len(entities)
+            context_parts.append(r.content)
+
+        context = "\n\n".join(context_parts)
+
+        if has_faculty and (total_faculty_entities > 0 or not all_direct_urls):
+            intent = "faculty_lookup"
+            response_type = "tabular"
+            directive = (
+                "GROUNDED OFFICIAL FACULTY DIRECTIVE:\n"
+                f"• The official institutional faculty directory was verified and loaded with verified faculty records.\n"
+                "• Answer the user's question directly, factually, and completely using the verified faculty data above.\n"
+                "• CITE actual faculty names, designations, qualifications, and official profile links directly from the table/list.\n"
+                "• NEVER claim the faculty names, roles, or qualifications are unavailable or tell the user to manually browse the site; present the verified details directly.\n"
+                "• Format the answer cleanly using a structured table or organized list with profile links."
+            )
+        elif all_direct_urls:
+            intent = "general"
+            response_type = "factual"
+            directive = (
+                "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
+                "• The relevant official institutional page was identified.\n"
+                "• Provide the direct canonical URL and explain the official resources available at this destination.\n"
+                "• Do NOT invent details that were not extracted."
+            )
+        else:
+            intent = "general"
+            response_type = "factual"
+            directive = (
+                "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
+                "• The above information was retrieved directly from the official institutional portal.\n"
+                "• Answer the user's question directly, factually, and completely using this verified information.\n"
+                "• Cite key details (e.g. designation, department, qualification, role, portal link).\n"
+                "• NEVER tell the user to visit or search the website for information given above; provide the verified facts directly."
+            )
+
+        return context, directive, sources, structured_sources, confidence, intent, response_type
+
     def _is_rag_sufficient(self, query: str, qualified_chunks: List[RetrievedChunk]) -> bool:
         """
         Evaluate whether retrieved RAG chunks actually contain the specific named entity
@@ -895,6 +1011,12 @@ class RAGService:
 
         # ── Direct Official URL Handler ──────────────────────────────
         explicit_urls = self._extract_official_urls(message)
+        if not explicit_urls and history:
+            followup_url = self._detect_followup_faculty_context(message, history)
+            if followup_url:
+                logger.info("Direct official URL resolved from follow-up context: %s", followup_url)
+                explicit_urls = [followup_url]
+
         if explicit_urls:
             logger.info("Direct official URL detected in query: %s", explicit_urls)
             url_results: List[OfficialWebResult] = []
@@ -904,20 +1026,17 @@ class RAGService:
                     url_results.append(u_res)
 
             if url_results:
-                context = "\n\n".join(r.content for r in url_results)
-                sources = [r.url for r in url_results]
-                structured_sources = [r.to_structured_source() for r in url_results]
+                (
+                    context,
+                    official_directive,
+                    sources,
+                    structured_sources,
+                    confidence,
+                    intent_val,
+                    response_type_val,
+                ) = self._build_grounded_evidence(message, url_results)
                 source_visibility = "compact" if len(structured_sources) <= 1 else "full"
-                confidence = "High"
 
-                official_directive = (
-                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
-                    "• The above information was retrieved directly from the official institutional URL provided.\n"
-                    "• Answer the user's question directly, factually, and completely using this verified information.\n"
-                    "• Cite key details (e.g. faculty names, designations, qualifications, official profile links).\n"
-                    "• Present the information in an organized, beautiful format (e.g. structured list or table).\n"
-                    "• NEVER claim the information is unavailable or tell the user to manually visit the page; synthesize the answer directly from the content above."
-                )
                 final_prompt = self._build_generation_prompt(
                     context=context,
                     query=message,
@@ -943,8 +1062,8 @@ class RAGService:
                     confidence=confidence,
                     retrieval_score=0.98,
                     is_refusal=False,
-                    intent="faculty_lookup" if any("/faculty" in u for u in explicit_urls) else "general",
-                    response_type="tabular" if any("/faculty" in u for u in explicit_urls) else "factual",
+                    intent=intent_val,
+                    response_type=response_type_val,
                     performance={
                         "retrieval_ms": int((time.perf_counter() - t_start) * 1000),
                         "generation_ms": int((t_gen_end - t_gen_start) * 1000),
@@ -1027,29 +1146,19 @@ class RAGService:
                 logger.warning("Official web fallback retrieval failed: %s", exc)
 
         if official_web_results:
-            context = "\n\n".join(r.content for r in official_web_results)
-            sources = [r.url for r in official_web_results]
-            structured_sources = [r.to_structured_source() for r in official_web_results]
+            (
+                context,
+                official_directive,
+                sources,
+                structured_sources,
+                confidence,
+                intent_val,
+                response_type_val,
+            ) = self._build_grounded_evidence(message, official_web_results)
             source_visibility = "compact" if len(structured_sources) <= 1 else "full"
-            confidence = "High"
             top_adjusted = 0.95
-
-            all_direct_urls = all(r.retrieval_method == "direct_url_only" for r in official_web_results)
-            if all_direct_urls:
-                official_directive = (
-                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
-                    "• The relevant official institutional page was identified, but its dynamic client-side content could not be fully extracted.\n"
-                    "• Explain clearly which official page or section exists and provide the direct canonical URL so the user can access it immediately.\n"
-                    "• Do NOT invent details that were not extracted."
-                )
-            else:
-                official_directive = (
-                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
-                    "• The above information was retrieved directly from the official institutional portal.\n"
-                    "• Answer the user's question directly, factually, and completely using this verified information.\n"
-                    "• Cite key details (e.g. designation, department, qualification, role, portal link).\n"
-                    "• NEVER tell the user to visit or search the website for information given above; provide the verified facts directly."
-                )
+            intent = intent_val
+            response_plan.response_type = response_type_val
 
             final_prompt = self._build_generation_prompt(
                 context=context,
@@ -1244,6 +1353,12 @@ class RAGService:
 
         # ── Direct Official URL Handler (Streaming) ───────────────────
         explicit_urls = self._extract_official_urls(message)
+        if not explicit_urls and history:
+            followup_url = self._detect_followup_faculty_context(message, history)
+            if followup_url:
+                logger.info("Direct official URL resolved from stream follow-up context: %s", followup_url)
+                explicit_urls = [followup_url]
+
         if explicit_urls:
             logger.info("Direct official URL detected in stream query: %s", explicit_urls)
             url_results: List[OfficialWebResult] = []
@@ -1253,28 +1368,22 @@ class RAGService:
                     url_results.append(u_res)
 
             if url_results:
-                context = "\n\n".join(r.content for r in url_results)
-                sources = [r.url for r in url_results]
-                structured_sources = [r.to_structured_source() for r in url_results]
+                (
+                    context,
+                    official_directive,
+                    sources,
+                    structured_sources,
+                    confidence,
+                    intent_val,
+                    format_val,
+                ) = self._build_grounded_evidence(message, url_results)
                 source_visibility = "compact" if len(structured_sources) <= 1 else "full"
-                confidence = "High"
 
-                official_directive = (
-                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
-                    "• The above information was retrieved directly from the official institutional URL provided.\n"
-                    "• Answer the user's question directly, factually, and completely using this verified information.\n"
-                    "• Cite key details (e.g. faculty names, designations, qualifications, official profile links).\n"
-                    "• Present the information in an organized, beautiful format (e.g. structured list or table).\n"
-                    "• NEVER claim the information is unavailable or tell the user to manually visit the page; synthesize the answer directly from the content above."
-                )
                 final_prompt = self._build_generation_prompt(
                     context=context,
                     query=message,
                     formatting_instructions=f"{official_directive}",
                 )
-
-                intent_val = "faculty_lookup" if any("/faculty" in u for u in explicit_urls) else "general"
-                format_val = "tabular" if any("/faculty" in u for u in explicit_urls) else "factual"
 
                 yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "source_visibility": source_visibility, "confidence": confidence, "retrieval_score": 0.98, "intent": intent_val, "response_type": format_val})}\n\n'
 
@@ -1365,29 +1474,19 @@ class RAGService:
 
         # ── CONTEXT OPTIMIZATION & PROMPT PREPARATION ─────────────────
         if official_web_results:
-            context = "\n\n".join(r.content for r in official_web_results)
-            sources = [r.url for r in official_web_results]
-            structured_sources = [r.to_structured_source() for r in official_web_results]
+            (
+                context,
+                official_directive,
+                sources,
+                structured_sources,
+                confidence,
+                intent_val,
+                response_type_val,
+            ) = self._build_grounded_evidence(message, official_web_results)
             source_visibility = "compact" if len(structured_sources) <= 1 else "full"
-            confidence = "High"
             top_adjusted = 0.95
-
-            all_direct_urls = all(r.retrieval_method == "direct_url_only" for r in official_web_results)
-            if all_direct_urls:
-                official_directive = (
-                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
-                    "• The relevant official institutional page was identified, but its dynamic client-side content could not be fully extracted.\n"
-                    "• Explain clearly which official page or section exists and provide the direct canonical URL so the user can access it immediately.\n"
-                    "• Do NOT invent details that were not extracted."
-                )
-            else:
-                official_directive = (
-                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
-                    "• The above information was retrieved directly from the official institutional portal.\n"
-                    "• Answer the user's question directly, factually, and completely using this verified information.\n"
-                    "• Cite key details (e.g. designation, department, qualification, role, portal link).\n"
-                    "• NEVER tell the user to visit or search the website for information given above; provide the verified facts directly."
-                )
+            intent = intent_val
+            response_plan.response_type = response_type_val
 
             final_prompt = self._build_generation_prompt(
                 context=context,

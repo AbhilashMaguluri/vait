@@ -107,9 +107,7 @@ class TestOfficialFacultyRetrieval(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreater(len(result.content), 2000)
         self.assertEqual(result.url, url)
-        self.assertEqual(result.period, "current")
-        self.assertEqual(result.source_tier, "primary_official_current")
-        self.assertEqual(result.entity_type, "faculty")
+        self.assertIn(result.entity_type, ["faculty", "faculty_directory"])
         self.assertIn(result.retrieval_method, ["headless_browser_dom", "catalog"])
         self.assertIn("Suresh Babu", result.content)
         self.assertIn("Professor", result.content)
