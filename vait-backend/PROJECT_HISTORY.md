@@ -258,6 +258,27 @@ For VAIT's use-case — infrequent batch ingestion with high-frequency reads —
 
 ---
 
+## Phase 5 — Conversational Context & Multi-Turn State Architecture + IST Timezone Grounding (September 2026)
+
+### What Was Built
+- **Generalized Conversation Context Resolver (`app/services/conversation_context_resolver.py`)**:
+  - Token-based & semantic pronoun/reference resolution (*them, they, these, those, their, first one, second, last*) without query hardcoding.
+  - Multi-format entity extraction from markdown tables, JSON entity cards, and bullet lists into `ExtractedEntity` models.
+  - Shallow vs. Deeper Profile distinction: immediately reuses already-retrieved institutional evidence for shallow queries, and crawls deeper profile pages up to `max_deeper_profiles_fetch` (default 3) for deep queries.
+  - Multi-turn source domain preservation across follow-up queries.
+- **Full Streaming & Non-Streaming Parity**:
+  - Identical context resolution, evidence reuse, entity tracking, and MongoDB state persistence across `/chat` and `/chat/stream`.
+  - Eliminates premature refusal or identity greeting resets ("I'm VAIT...") on follow-up questions.
+- **Indian Standard Time (IST / Asia/Kolkata) Grounding**:
+  - Central timezone configuration (`APP_TIMEZONE=Asia/Kolkata`) with `tzdata` package fallback.
+  - Temporal context grounding helper (`app/utils/timezone.py`) injected into LLM system prompts (`now_ist()`, `get_ist_grounding_context()`).
+  - Frontend display audit in `MessageBubble.jsx` and `HistoryList.jsx` enforcing `timeZone: 'Asia/Kolkata'`.
+- **Comprehensive Regression & Acceptance Testing**:
+  - 20 unit tests in `tests/test_conversational_context_resolver.py`.
+  - End-to-end multi-turn live acceptance tests verifying follow-ups, ordinal selections, department transitions, and timezone queries.
+
+---
+
 ## File Reference
 
 ```
@@ -273,18 +294,26 @@ vait-backend/
 │   ├── controllers/
 │   │   └── chat_controller.py      # Business logic orchestration
 │   ├── routes/
-│   │   ├── chat.py                 # Chat API endpoints
+│   │   ├── chat.py                 # Chat API endpoints (/chat & /chat/stream)
+│   │   ├── auth.py                 # Authentication & session endpoints
 │   │   └── admin.py                # Admin API endpoints
 │   ├── services/
+│   │   ├── conversation_context_resolver.py # Multi-turn reference resolution & entity tracking
+│   │   ├── conversation_service.py # MongoDB conversation persistence & context state
 │   │   ├── embedding_service.py    # Embedding generation
 │   │   ├── llm_service.py          # LLM generation with fallback
-│   │   ├── rag_service.py          # Core RAG pipeline
+│   │   ├── rag_service.py          # Core RAG pipeline with context hydration
 │   │   ├── browser_retrieval_service.py # Headless browser & vision OCR
 │   │   ├── official_web_retriever.py    # Official web discovery & caching
 │   │   └── evidence_quality_validator.py # Multi-domain evidence validation
 │   └── utils/
 │       ├── config.py               # Configuration + validation
+│       ├── timezone.py             # IST (Asia/Kolkata) helpers & temporal grounding
 │       └── text_chunker.py         # Token-aware text chunking
+└── tests/
+    ├── test_conversational_context_resolver.py # 20 regression tests for follow-up state
+    ├── test_screenshot_vision_architecture.py  # Tier 4 screenshot & vision tests
+    └── test_official_faculty_retrieval.py      # Tier 2/3 official web retrieval tests
 ```
 
 ---

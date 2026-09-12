@@ -6,6 +6,7 @@ import './HistoryList.css';
 function formatDate(isoString) {
   const d = new Date(isoString);
   return d.toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata',
     day: '2-digit',
     month: 'short',
     year: 'numeric',
@@ -15,6 +16,7 @@ function formatDate(isoString) {
 function formatTime(isoString) {
   const d = new Date(isoString);
   return d.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,

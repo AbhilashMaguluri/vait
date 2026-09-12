@@ -6,6 +6,7 @@ function formatTime(isoString) {
   if (!isoString) return '';
   const d = new Date(isoString);
   return d.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,

@@ -203,6 +203,11 @@ class Settings(BaseSettings):
     cache_static_ttl_seconds: int = Field(default=7200, alias="CACHE_STATIC_TTL_SECONDS")
     cache_dynamic_ttl_seconds: int = Field(default=600, alias="CACHE_DYNAMIC_TTL_SECONDS")
 
+    # ── Timezone & Conversational Context Settings ───────────────────
+    app_timezone: str = Field(default="Asia/Kolkata", alias="APP_TIMEZONE")
+    max_context_history_turns: int = Field(default=10, alias="MAX_CONTEXT_HISTORY_TURNS")
+    max_deeper_profiles_fetch: int = Field(default=3, alias="MAX_DEEPER_PROFILES_FETCH")
+
     auto_reindex_on_startup: bool = False
     auto_watch_enabled: bool = False
     watch_directories: List[str] = [

@@ -84,9 +84,11 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
 - **Clean separation** — Routes → Controllers → Services
 - **Cloud-capable** — Groq primary with OpenRouter fallback
 - **Four-Tier Hybrid Retrieval** — Tier 1 FAISS RAG → Tier 2 Fast HTTP Fetch → Tier 3 Headless Browser DOM → Tier 4 Query-Aware Semantic Screenshot + Vision OCR (See [VAIT Architecture](vait-backend/VAIT_ARCHITECTURE.md) for full specification)
+- **Conversational Context Engine** — Multi-turn pronoun & entity reference resolution (`them`, `they`, `first one`, `second one`), shallow evidence reuse, and streaming parity without hardcoding
+- **IST Timezone Grounding** — Enforces `Asia/Kolkata` (UTC+05:30) across backend temporal prompts, relative date parsing, and frontend UI display
 - **Zero hallucination** — Strict retrieval threshold + authority hierarchy + refusal mechanism
 
-> 📖 **Canonical Architecture Specification**: For complete details on the four retrieval tiers, SSRF security model, semantic tiling, dual-model vision fallback, and deployment topology, see [`vait-backend/VAIT_ARCHITECTURE.md`](vait-backend/VAIT_ARCHITECTURE.md).
+> 📖 **Canonical Architecture Specification**: For complete details on the four retrieval tiers, conversational context resolver, IST timezone enforcement, SSRF security model, semantic tiling, dual-model vision fallback, and deployment topology, see [`vait-backend/VAIT_ARCHITECTURE.md`](vait-backend/VAIT_ARCHITECTURE.md).
 
 ---
 

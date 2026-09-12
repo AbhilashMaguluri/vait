@@ -28,6 +28,7 @@ class ChatResult:
     intent: str = "general"
     response_type: str = "informational"
     source_visibility: str = "none"
+    context_state: Optional[Dict] = None
 
 
 class ChatController:
@@ -39,6 +40,8 @@ class ChatController:
         department: Optional[str] = None,
         academic_year: Optional[str] = None,
         history: Optional[List[Dict]] = None,
+        context_state: Optional[Dict] = None,
+        conversation_id: Optional[str] = None,
     ) -> ChatResult:
         """Process a user message through the RAG pipeline."""
         rag_service = _get_rag_service()
@@ -58,7 +61,12 @@ class ChatController:
             )
 
         try:
-            response: RAGResponse = await rag_service.process_query(message, history=history)
+            response: RAGResponse = await rag_service.process_query(
+                message,
+                history=history,
+                context_state=context_state,
+                conversation_id=conversation_id,
+            )
         except Exception as exc:
             logger.error("RAG/LLM processing failed: %s", exc, exc_info=True)
             return ChatResult(
@@ -85,6 +93,7 @@ class ChatController:
             intent=response.intent,
             response_type=getattr(response, "response_type", "informational"),
             source_visibility=getattr(response, "source_visibility", "none"),
+            context_state=getattr(response, "context_state", None),
         )
 
     async def process_message_stream(
@@ -93,6 +102,8 @@ class ChatController:
         department: Optional[str] = None,
         academic_year: Optional[str] = None,
         history: Optional[List[Dict]] = None,
+        context_state: Optional[Dict] = None,
+        conversation_id: Optional[str] = None,
     ):
         """Process a user message through the RAG pipeline with streaming and memory."""
         import json
@@ -103,7 +114,12 @@ class ChatController:
             return
 
         try:
-            async for chunk in rag_service.process_query_stream(message, history=history):
+            async for chunk in rag_service.process_query_stream(
+                message,
+                history=history,
+                context_state=context_state,
+                conversation_id=conversation_id,
+            ):
                 yield chunk
         except Exception as exc:
             logger.error("Streaming RAG/LLM processing failed: %s", exc, exc_info=True)

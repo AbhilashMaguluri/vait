@@ -127,6 +127,7 @@ async def record_chat_exchange(
     academic_year: str | None = None,
     performance: dict[str, Any] | None = None,
     source_visibility: str = "none",
+    context_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Append a user/assistant exchange and update per-user usage counters."""
 
@@ -197,6 +198,8 @@ async def record_chat_exchange(
         "updated_at": now,
         "last_message_at": now,
     }
+    if context_state:
+        updates["context_state"] = context_state
     if not conversation.get("title") or conversation.get("title") == "New Conversation":
         updates["title"] = _conversation_title(user_message)
 
@@ -270,3 +273,11 @@ async def delete_user_conversation(database, user_id: ObjectId, conversation_id:
     if not conversation:
         raise ValueError("Conversation not found")
     await database[CONVERSATIONS_COLLECTION].delete_one({"_id": conversation["_id"], "user_id": user_id})
+
+
+async def get_conversation_context(database, user_id: ObjectId, conversation_id: str | None) -> dict[str, Any] | None:
+    """Retrieve stored conversational context state for a conversation."""
+    if not conversation_id:
+        return None
+    conversation = await find_user_conversation(database, user_id, conversation_id)
+    return conversation.get("context_state") if conversation else None

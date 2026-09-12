@@ -18,8 +18,10 @@ VAIT is an institutional AI assistant that provides accurate information exclusi
   - **Legacy Institute (VVIT)**: `https://vvitguntur.com/` — Historical/legacy source for past institutional records (older programs, past calendar, archival records).
   - **Secondary LinkedIn**: Official VVIT / VVITU updates
   - **Tertiary Social / Related Web**: Supporting records only
+- **Conversational Context Resolution**: Generic multi-turn pronoun & entity reference resolution (`them`, `they`, `these`, `first one`, `second one`) without query hardcoding.
+- **IST Timezone Grounding**: Enforces `Asia/Kolkata` (UTC+05:30) system-wide for deterministic date/schedule reasoning.
 
-> 📖 **Architecture Specification**: For the complete architectural blueprint covering the 4-tier retrieval pipeline, SSRF security model, semantic tiling, and cloud deployment, refer to [`VAIT_ARCHITECTURE.md`](VAIT_ARCHITECTURE.md).
+> 📖 **Architecture Specification**: For the complete architectural blueprint covering the 4-tier retrieval pipeline, conversational context resolver, IST timezone enforcement, SSRF security model, semantic tiling, and cloud deployment, refer to [`VAIT_ARCHITECTURE.md`](VAIT_ARCHITECTURE.md).
 
 ---
 

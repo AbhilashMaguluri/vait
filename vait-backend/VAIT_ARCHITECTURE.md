@@ -107,3 +107,66 @@ graph TD
 - **System Dependencies:** Includes all required X11, Cairo, Pango, and NSS shared libraries for headless Chromium execution.
 - **Non-Root Execution:** Runs under dedicated `appuser` (UID 1000).
 - **Configuration Management:** Environment variables configured in `render.yaml` and loaded via Pydantic `Settings`.
+
+---
+
+## 7. Conversational Context & Multi-Turn Reference Resolution
+
+VAIT implements a generalized multi-turn reference resolution engine (`ConversationContextResolver`) to maintain continuity across follow-up queries without hardcoding specific subjects or conversational shortcuts.
+
+```mermaid
+graph TD
+    UserTurn["Follow-up Query (e.g. 'fetch details about them')"] --> Resolver["ConversationContextResolver"]
+    Resolver --> Classify["Analyze Query Tokens & Pronouns"]
+    Classify -- "Plural Reference (them, they, these, all of them)" --> MultiEntity["Resolve to Current Tracked Entities (61 AI Faculty)"]
+    Classify -- "Ordinal Reference (first one, second, last)" --> SingleEntity["Resolve to Specific Tracked Entity by Position"]
+    Classify -- "Department Transition (what about ECE?)" --> Transition["Transition Domain & Reset Entities"]
+    
+    MultiEntity --> EvidenceCheck{"Is Already-Retrieved Evidence Sufficient?"}
+    EvidenceCheck -- "Yes (Shallow Query)" --> ReuseEvidence["Reuse Institutional Evidence Immediately (0 network calls)"]
+    EvidenceCheck -- "No (Deep Query e.g. publications/bio)" --> DeepFetch["Fetch Deeper Profiles (up to max_deeper_profiles_fetch)"]
+    
+    SingleEntity --> PromptAugment["Augment Query with Grounded Entity Context"]
+    ReuseEvidence --> PromptAugment
+    DeepFetch --> PromptAugment
+    Transition --> RAGRetrieval["Perform Fresh Official Retrieval"]
+    
+    PromptAugment --> LLMGen["Ground in Institutional Context (Prevent Generic Refusal)"]
+```
+
+### Reference Resolution Model
+1. **Generic Linguistic Tokens:** Resolves plural references (*them, they, these, those, their*), singular references (*he, she, it*), and ordinal references (*first, second, third, last*) using clean tokenization. Zero hardcoded query strings.
+2. **Multi-Format Entity Extraction:** Extracts structured entities (`ExtractedEntity`) from:
+   - Structured markdown tables generated from dynamic web grids.
+   - Structured JSON card structures (`res.entities`).
+   - Bulleted entity lists and profile URLs.
+3. **Shallow vs. Deeper Profile Crawling:**
+   - **Shallow follow-up queries** (e.g., "fetch details about them", "give me more info"): The resolver identifies that the already-retrieved institutional evidence contains detailed tables/cards. It reuses the evidence context directly, avoiding redundant network trips.
+   - **Deep follow-up queries** (e.g., "what are Dr. Suresh's publications?"): The resolver inspects entity `profile_url` attributes and selectively crawls deeper profile pages up to `max_deeper_profiles_fetch` (default: 3).
+4. **State Persistence & Hydration:**
+   - Conversation context state (`ConversationContext`) is serialized and persisted to MongoDB via `record_chat_exchange`.
+   - On subsequent turns, `_get_or_rehydrate_context` dynamically reconstructs context from either the stored `context_state` or the multi-turn history window (`max_context_history_turns = 10`).
+5. **Streaming & Non-Streaming Parity:**
+   - Both `/chat` and `/chat/stream` share identical reference resolution, evidence reuse, entity extraction, and state persistence workflows.
+
+---
+
+## 8. Indian Standard Time (IST / Asia/Kolkata) Grounding
+
+VAIT enforces Indian Standard Time (`Asia/Kolkata`, UTC+05:30) project-wide to ensure temporal accuracy for academic schedules, circulars, admission deadlines, and date calculations.
+
+### Backend Timezone Enforcement
+- **Central Configuration:** `app_timezone: str = "Asia/Kolkata"` defined in `Settings` with automatic fallback via the `tzdata` package.
+- **Grounding Helper:** `app.utils.timezone` provides `now_ist()`, `to_ist()`, `format_ist()`, `resolve_relative_date()`, and `get_ist_grounding_context()`.
+- **System Prompt Injection:** Injects current IST date, day of week, time, and academic year into LLM prompts (`_build_generation_prompt` and `_build_llm_only_prompt`):
+  ```
+  CURRENT SYSTEM TIMEZONE & DATE (Asia/Kolkata / IST, UTC+05:30):
+  - Current Date & Time: Saturday, 12 September 2026, 10:30 AM IST
+  - Current Day: Saturday
+  - Indian Standard Time (IST) offset: +05:30
+  - All relative date inquiries ('today', 'yesterday', 'tomorrow', 'this week', 'current academic year') MUST be interpreted strictly according to this IST reference date.
+  ```
+
+### Frontend Timezone Formatting
+- All user-facing timestamps in `MessageBubble.jsx` and `HistoryList.jsx` explicitly use `timeZone: 'Asia/Kolkata'` in `toLocaleTimeString` and `toLocaleDateString`, guaranteeing visual consistency regardless of the user's browser locale.
+

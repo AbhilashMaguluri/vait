@@ -13,6 +13,8 @@ from app.services.activity_service import log_activity
 from app.services.conversation_service import (
     clear_user_conversation,
     delete_user_conversation,
+    find_user_conversation,
+    get_conversation_context,
     list_user_conversations,
     record_chat_exchange,
     rename_user_conversation,
@@ -161,6 +163,7 @@ async def _persist_chat_response(database, current_user: dict, request: ChatRequ
             academic_year=request.academic_year,
             performance=response.performance,
             source_visibility=getattr(response, "source_visibility", "none"),
+            context_state=getattr(response, "context_state", None),
         )
         await log_activity(
             database,
@@ -201,11 +204,25 @@ async def chat(
     try:
         database = get_database()
         logger.info("Incoming chat request: %s", request.message)
+
+        context_state = None
+        if request.conversation_id:
+            conv = await find_user_conversation(database, current_user["_id"], request.conversation_id)
+            if conv:
+                context_state = conv.get("context_state")
+                if not request.history and conv.get("messages"):
+                    request.history = [
+                        MessageItem(role=m.get("role", "user"), content=m.get("text", ""))
+                        for m in conv.get("messages", [])[-10:]
+                    ]
+
         response = await controller.process_message(
             message=request.message,
             department=request.department,
             academic_year=request.academic_year,
             history=_history_for_controller(request.history),
+            context_state=context_state,
+            conversation_id=request.conversation_id,
         )
         conversation_id = await _persist_chat_response(database, current_user, request, response)
         logger.info(
@@ -251,6 +268,17 @@ async def chat_stream(
     logger.info("Incoming stream chat request: %s", request.message)
     logger.info("Outgoing stream chat response: stream initialized")
 
+    context_state = None
+    if request.conversation_id:
+        conv = await find_user_conversation(database, current_user["_id"], request.conversation_id)
+        if conv:
+            context_state = conv.get("context_state")
+            if not request.history and conv.get("messages"):
+                request.history = [
+                    MessageItem(role=m.get("role", "user"), content=m.get("text", ""))
+                    for m in conv.get("messages", [])[-10:]
+                ]
+
     async def persisted_stream():
         reply_parts: list[str] = []
         metadata: dict = {
@@ -268,6 +296,8 @@ async def chat_stream(
                 department=request.department,
                 academic_year=request.academic_year,
                 history=_history_for_controller(request.history),
+                context_state=context_state,
+                conversation_id=request.conversation_id,
             ):
                 for event in [part for part in chunk.split("\n\n") if part.strip().startswith("data:")]:
                     try:
@@ -301,6 +331,7 @@ async def chat_stream(
                         department=request.department,
                         academic_year=request.academic_year,
                         source_visibility=metadata.get("source_visibility", "none"),
+                        context_state=metadata.get("context_state"),
                     )
                     await log_activity(
                         database,
