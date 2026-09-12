@@ -84,11 +84,11 @@ VAIT is **not** a general-purpose chatbot. It is a **strict institutional knowle
 - **Clean separation** — Routes → Controllers → Services
 - **Cloud-capable** — Groq primary with OpenRouter fallback
 - **Four-Tier Hybrid Retrieval** — Tier 1 FAISS RAG → Tier 2 Fast HTTP Fetch → Tier 3 Headless Browser DOM → Tier 4 Query-Aware Semantic Screenshot + Vision OCR (See [VAIT Architecture](vait-backend/VAIT_ARCHITECTURE.md) for full specification)
-- **Conversational Context Engine** — Multi-turn pronoun & entity reference resolution (`them`, `they`, `first one`, `second one`), shallow evidence reuse, and streaming parity without hardcoding
+- **Generic Institutional Conversational Context** — Universal multi-turn pronoun & entity reference resolution (`them`, `they`, `these`, `it`, `first one`, `second one`), sibling concept transitions, ambiguity detection, evidence reuse, and streaming parity across all institutional concepts without hardcoded shortcuts
 - **IST Timezone Grounding** — Enforces `Asia/Kolkata` (UTC+05:30) across backend temporal prompts, relative date parsing, and frontend UI display
 - **Zero hallucination** — Strict retrieval threshold + authority hierarchy + refusal mechanism
 
-> 📖 **Canonical Architecture Specification**: For complete details on the four retrieval tiers, conversational context resolver, IST timezone enforcement, SSRF security model, semantic tiling, dual-model vision fallback, and deployment topology, see [`vait-backend/VAIT_ARCHITECTURE.md`](vait-backend/VAIT_ARCHITECTURE.md).
+> 📖 **Canonical Architecture Specification**: For complete details on the four retrieval tiers, generic institutional conversational context resolver, IST timezone enforcement, SSRF security model, semantic tiling, dual-model vision fallback, and deployment topology, see [`vait-backend/VAIT_ARCHITECTURE.md`](vait-backend/VAIT_ARCHITECTURE.md).
 
 ---
 
@@ -319,6 +319,10 @@ pip install -r requirements.txt
 # Ingest documents into the knowledge base
 python scripts/ingest_documents.py
 
+# Run test suite
+python -m unittest tests.test_conversational_context_resolver  # 28 multi-domain tests
+python -m unittest discover tests                              # 55 full backend tests
+
 # Start the backend server
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -409,6 +413,24 @@ Key settings managed via `.env` + Pydantic Settings:
 ---
 
 ## 📝 Changelog
+
+### v1.3.0 — Generic Institutional Conversational Context & IST Grounding (September 2026)
+- **Generic Institutional Context & Concept Ontology**:
+  - Replaced ad-hoc entity follow-ups with a generic institutional ontology (`InstitutionalEntity`, `ConversationContext`) scaling across all VVIT concepts (Faculty, Fees, Departments, Courses, Hostels, Transport, Exams, Notices, Placements, Facilities, Leadership).
+  - Linguistic reference resolution for plural pronouns (*them, they, their*), singular pronouns (*it, he, she*), ordinals (*first, second, last*), sibling branch transitions (*"what about AI & DS?"*), and relationship navigation (*"who is the hod?"*).
+  - Ambiguity detection prompting user for clarification when multiple antecedents exist.
+  - Zero network latency evidence reuse (`FOLLOWUP_EVIDENCE_REUSE`) and parallel deeper crawling (`FOLLOWUP_DEEPER_RETRIEVAL`) via `asyncio.gather`.
+  - Evidence context capping (`max_evidence_chars = 9500`) to prevent LLM tokens-per-minute (TPM) limit overruns.
+  - 100% parity between non-streaming (`/api/vait/chat`) and streaming (`/api/vait/chat/stream`).
+  - Strict Indian Standard Time (`Asia/Kolkata`, UTC+05:30) grounding project-wide.
+  - 28-test multi-domain context unit matrix and 55-test discovery test suite passing 100%.
+
+### v1.2.0 — Production Screenshot Architecture & Multi-Tier Retrieval (September 2026)
+- **Four-tier retrieval pipeline**: FAISS vector RAG → Fast HTTP fetch → Headless Chromium DOM → Query-Aware Semantic Screenshot + Vision OCR fallback.
+- Query-aware element scoring and semantic tiling ($\le 1600\text{px}$) solving long-page image degradation.
+- Dual-model vision fallback: OpenRouter `gemini-2.5-flash` primary → `llama-3.2-11b-vision` secondary.
+- Per-page concurrency semaphore, Playwright client-side redirect interception (SSRF protection), and content-aware cache TTL.
+- Production containerization with headless browser dependencies and Render deployment blueprint.
 
 ### v1.1.0 — Model Migration (February 2026)
 - **Switched to Groq primary + OpenRouter fallback** for cloud reliability

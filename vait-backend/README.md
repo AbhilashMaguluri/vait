@@ -18,10 +18,10 @@ VAIT is an institutional AI assistant that provides accurate information exclusi
   - **Legacy Institute (VVIT)**: `https://vvitguntur.com/` — Historical/legacy source for past institutional records (older programs, past calendar, archival records).
   - **Secondary LinkedIn**: Official VVIT / VVITU updates
   - **Tertiary Social / Related Web**: Supporting records only
-- **Conversational Context Resolution**: Generic multi-turn pronoun & entity reference resolution (`them`, `they`, `these`, `first one`, `second one`) without query hardcoding.
+- **Generic Institutional Conversational Context**: Universal multi-turn pronoun & entity reference resolution (`them`, `they`, `these`, `it`, `first one`, `second one`), sibling concept transitions, ambiguity detection, and evidence reuse across all university concepts (Faculty, Fees, Departments, Courses, Hostels, Transport, Exams, Notices).
 - **IST Timezone Grounding**: Enforces `Asia/Kolkata` (UTC+05:30) system-wide for deterministic date/schedule reasoning.
 
-> 📖 **Architecture Specification**: For the complete architectural blueprint covering the 4-tier retrieval pipeline, conversational context resolver, IST timezone enforcement, SSRF security model, semantic tiling, and cloud deployment, refer to [`VAIT_ARCHITECTURE.md`](VAIT_ARCHITECTURE.md).
+> 📖 **Architecture Specification**: For the complete architectural blueprint covering the 4-tier retrieval pipeline, generic institutional conversational context engine, IST timezone enforcement, SSRF security model, semantic tiling, and cloud deployment, refer to [`VAIT_ARCHITECTURE.md`](VAIT_ARCHITECTURE.md).
 
 ---
 
@@ -367,10 +367,21 @@ Once running, access interactive API docs at:
 ### Testing
 
 ```powershell
-# Test chat endpoint
+# Run 28 multi-domain unit tests for generic context & reference resolution
+python -m unittest tests.test_conversational_context_resolver
+
+# Run full backend discovery test suite (55 tests)
+python -m unittest discover tests
+
+# Test live non-streaming chat endpoint
 curl -X POST "http://localhost:8000/api/vait/chat" \
   -H "Content-Type: application/json" \
   -d '{"message": "What are the admission requirements?"}'
+
+# Test live streaming chat endpoint
+curl -X POST "http://localhost:8000/api/vait/chat/stream" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "who is the hod of computer science at vvit?"}'
 ```
 
 ---

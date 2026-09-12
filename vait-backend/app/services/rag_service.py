@@ -490,31 +490,36 @@ class RAGService:
         if not history:
             return ctx
 
-        # 1. Look backwards for the last assistant turn to extract active entities and evidence
-        for turn in reversed(history):
-            role = turn.get("role") if isinstance(turn, dict) else getattr(turn, "role", "")
-            content = turn.get("content") or turn.get("text") if isinstance(turn, dict) else (getattr(turn, "content", None) or getattr(turn, "text", ""))
-            if role == "assistant" and content:
-                extracted = self.context_resolver.extract_entities_from_evidence(content)
-                if extracted:
-                    ctx.active_entities = extracted
-                    ctx.last_evidence_text = content
-                    ctx.last_answer = content
-                    break
-
-        # 2. Look backwards for user turns to infer active subject and period
+        # 1. Look backwards for user turns to infer active subject, concept, and filters
         for turn in reversed(history):
             role = turn.get("role") if isinstance(turn, dict) else getattr(turn, "role", "")
             content = turn.get("content") or turn.get("text") if isinstance(turn, dict) else (getattr(turn, "content", None) or getattr(turn, "text", ""))
             if role == "user" and content:
-                c_low = content.lower()
-                if any(term in c_low for term in ["faculty", "professor", "teacher", "hod"]):
-                    ctx.active_subject = content.strip()
-                    ctx.active_entity_type = "faculty"
+                concept = self.context_resolver.detect_concept(content)
+                subject = self.context_resolver.detect_subject(content)
+                filters = self.context_resolver.detect_filters(content)
+                if concept:
+                    ctx.active_concept = concept
+                    ctx.active_entity_type = concept
+                if subject:
+                    ctx.active_subject = subject
+                if filters:
+                    ctx.active_filters.update(filters)
+                if concept or subject:
                     break
-                elif any(term in c_low for term in ["fee", "fees", "tuition"]):
-                    ctx.active_subject = content.strip()
-                    ctx.active_entity_type = "fee"
+
+        # 2. Look backwards for the last assistant turn to extract active entities and evidence
+        for turn in reversed(history):
+            role = turn.get("role") if isinstance(turn, dict) else getattr(turn, "role", "")
+            content = turn.get("content") or turn.get("text") if isinstance(turn, dict) else (getattr(turn, "content", None) or getattr(turn, "text", ""))
+            if role == "assistant" and content:
+                extracted = self.context_resolver.extract_entities_from_evidence(content, concept=ctx.active_concept)
+                if extracted:
+                    ctx.active_entities = extracted
+                    if not ctx.active_entity_type and extracted[0].entity_type:
+                        ctx.active_entity_type = extracted[0].entity_type
+                    ctx.last_evidence_text = content
+                    ctx.last_answer = content
                     break
 
         # 3. Look for official URLs in history to preserve source continuity
@@ -531,6 +536,50 @@ class RAGService:
                     break
 
         return ctx
+
+    def _detect_followup_official_url_context(self, message: str, history: Optional[list]) -> Optional[str]:
+        """
+        Generic institutional follow-up URL resolver: looks for official URLs or matching routes
+        across any institutional domain in conversation history.
+        """
+        if not history:
+            return None
+
+        msg_clean = message.lower().strip()
+        followup_cues = [
+            "them", "they", "their", "these", "those", "him", "her", "it", "this", "that",
+            "details about", "fetch details", "more details", "what are the", "who is the",
+            "qualifications", "designation", "hod", "head of department", "who are they",
+            "fees", "hostel", "transport", "bus", "schedule", "syllabus", "curriculum",
+        ]
+        has_followup_cue = any(cue in msg_clean for cue in followup_cues)
+        if not has_followup_cue:
+            return None
+
+        official_url_pattern = re.compile(
+            r'https?://(?:www\.)?(?:vvitu\.ac\.in|vvitguntur\.com)/[a-zA-Z0-9_/-]+'
+        )
+
+        for turn in reversed(history):
+            content = ""
+            if isinstance(turn, dict):
+                content = turn.get("content", "") or ""
+            elif hasattr(turn, "content"):
+                content = getattr(turn, "content", "") or ""
+
+            match = official_url_pattern.search(content)
+            if match:
+                resolved = match.group(0)
+                logger.info("Resolved follow-up query '%s' to official URL from history: %s", message, resolved)
+                return resolved
+
+            if hasattr(self, "web_retriever") and self.web_retriever:
+                routes = self.web_retriever._find_matching_routes(content)
+                if routes:
+                    logger.info("Resolved follow-up query '%s' to matching route: %s", message, routes[0]["url"])
+                    return routes[0]["url"]
+
+        return None
 
     def _detect_followup_faculty_context(self, message: str, history: Optional[list]) -> Optional[str]:
         """
@@ -614,6 +663,9 @@ class RAGService:
             context_parts.append(r.content)
 
         context = "\n\n".join(context_parts)
+        max_evidence_chars = getattr(self.settings, "max_context_chars", 9500)
+        if len(context) > max_evidence_chars:
+            context = context[:max_evidence_chars] + "\n\n[... content truncated to fit model token limit ...]"
 
         if has_faculty and (total_faculty_entities > 0 or not all_direct_urls):
             intent = "faculty_lookup"
@@ -1097,14 +1149,38 @@ class RAGService:
             len(followup_intent.target_profile_urls),
         )
 
+        # A0. Ambiguous Reference Clarification
+        if followup_intent.intent_type == IntentType.AMBIGUOUS_CLARIFICATION:
+            clarification_text = followup_intent.clarification_prompt or "Could you please clarify which entity or topic you are referring to?"
+            current_context.last_answer = clarification_text
+            current_context.last_query = message
+            current_context.last_updated_ist = format_ist()
+            if conversation_id:
+                self._conversation_contexts[conversation_id] = current_context
+            return RAGResponse(
+                reply=clarification_text,
+                sources=[],
+                structured_sources=[],
+                source_visibility="none",
+                confidence="High",
+                retrieval_score=1.0,
+                is_refusal=False,
+                intent="clarification",
+                response_type="simple",
+                context_state=current_context.model_dump(),
+            )
+
         # A. Evidence Reuse or Single Entity Filter
         if followup_intent.intent_type in (IntentType.FOLLOWUP_EVIDENCE_REUSE, IntentType.FOLLOWUP_ENTITY_FILTER) and followup_intent.reusable_evidence:
             logger.info("Resolving query via conversational evidence reuse: %s", followup_intent.intent_type)
             context = followup_intent.reusable_evidence
             sources = current_context.active_source_urls or [self.settings.current_university_url]
+            concept_label = (current_context.active_concept or current_context.active_entity_type or "institutional").capitalize()
+            subject_label = (current_context.active_subject or "VVITU").title()
+            title_text = f"VVITU Official {subject_label} {concept_label} Records" if current_context.active_subject else f"VVITU Official {concept_label} Directory & Records"
             structured_sources = [
                 {
-                    "title": "VVITU Official Faculty / Institutional Directory",
+                    "title": title_text,
                     "url": u,
                     "type": "website_current",
                     "period_label": "VVITU Official Portal — Grounded Record",
@@ -1115,7 +1191,7 @@ class RAGService:
                 "GROUNDED CONVERSATIONAL FOLLOW-UP DIRECTIVE:\n"
                 "• The user is asking a follow-up question referring to entities verified in earlier turns.\n"
                 "• Answer directly, concisely, and factually using the verified details in the context above.\n"
-                "• Cite specific names, designations, qualifications, roles, or links given in context.\n"
+                "• Cite specific names, designations, qualifications, roles, fees, or links given in context.\n"
                 "• NEVER reset to generic greeting, and NEVER claim the information is unavailable if present in context."
             )
             final_prompt = self._build_generation_prompt(
@@ -1141,6 +1217,7 @@ class RAGService:
             if conversation_id:
                 self._conversation_contexts[conversation_id] = current_context
 
+            intent_val = f"{current_context.active_concept}_lookup" if current_context.active_concept else ("faculty_lookup" if current_context.active_entity_type == "faculty" else "academic")
             resp = RAGResponse(
                 reply=response_text,
                 sources=sources,
@@ -1149,7 +1226,7 @@ class RAGService:
                 confidence=confidence,
                 retrieval_score=0.98,
                 is_refusal=False,
-                intent="faculty_lookup" if current_context.active_entity_type == "faculty" else "academic",
+                intent=intent_val,
                 response_type="factual",
                 performance={
                     "retrieval_ms": 0,
@@ -1167,9 +1244,11 @@ class RAGService:
                         len(followup_intent.target_profile_urls), followup_intent.target_profile_urls)
             deeper_results: List[OfficialWebResult] = []
             max_crawl = getattr(self.settings, "max_deeper_profiles_fetch", 3)
-            for purl in followup_intent.target_profile_urls[:max_crawl]:
-                p_res = await self.web_retriever.retrieve_url(purl, query=message)
-                if p_res.retrieval_method != "failed":
+            # Parallel subpage retrieval
+            crawl_tasks = [self.web_retriever.retrieve_url(purl, query=message) for purl in followup_intent.target_profile_urls[:max_crawl]]
+            crawl_res = await asyncio.gather(*crawl_tasks, return_exceptions=True)
+            for p_res in crawl_res:
+                if isinstance(p_res, OfficialWebResult) and p_res.retrieval_method != "failed":
                     deeper_results.append(p_res)
 
             if deeper_results:
@@ -1184,7 +1263,8 @@ class RAGService:
                 ) = self._build_grounded_evidence(message, deeper_results)
 
                 if current_context.last_evidence_text:
-                    context = f"=== PREVIOUS TURN SUMMARY ===\n{current_context.last_evidence_text}\n\n=== DEEP PROFILE PAGES RETRIEVED ===\n{context}"
+                    prev_summary = current_context.last_evidence_text[:1200]
+                    context = f"=== PREVIOUS TURN SUMMARY ===\n{prev_summary}\n\n=== DEEP PROFILE PAGES RETRIEVED ===\n{context}"
 
                 final_prompt = self._build_generation_prompt(
                     context=context,
@@ -1233,12 +1313,25 @@ class RAGService:
                 )
                 return resp
 
-        # C. Topic Expansion
+        # C. Topic Expansion / Concept Transition
         if followup_intent.intent_type == IntentType.FOLLOWUP_TOPIC_EXPANSION:
             message = followup_intent.resolved_query
             current_context.active_entities = []
             current_context.last_evidence_text = None
             current_context.active_subject = followup_intent.resolved_query
+            if followup_intent.active_concept:
+                current_context.active_concept = followup_intent.active_concept
+
+        if followup_intent.intent_type == IntentType.FOLLOWUP_CONCEPT_TRANSITION:
+            logger.info("Follow-up concept transition detected: '%s' -> resolved='%s'", message, followup_intent.resolved_query)
+            message = followup_intent.resolved_query
+            current_context.active_entities = []
+            current_context.last_evidence_text = None
+            if followup_intent.active_subject:
+                current_context.active_subject = followup_intent.active_subject
+            if followup_intent.active_concept:
+                current_context.active_concept = followup_intent.active_concept
+                current_context.active_entity_type = followup_intent.active_concept
 
         # ── Direct Official URL Handler ──────────────────────────────
         explicit_urls = self._extract_official_urls(message)
@@ -1565,6 +1658,30 @@ class RAGService:
             top_adjusted_score=top_adjusted,
         )
 
+        current_context.last_answer = response_text
+        current_context.last_query = message
+        current_context.last_evidence_text = context
+        current_context.active_source_urls = sources
+        detected_concept = self.context_resolver.detect_concept(message)
+        if detected_concept:
+            current_context.active_concept = detected_concept
+            current_context.active_entity_type = detected_concept
+        detected_subject = self.context_resolver.detect_subject(message)
+        if detected_subject:
+            current_context.active_subject = detected_subject
+        detected_filters = self.context_resolver.detect_filters(message)
+        if detected_filters:
+            current_context.active_filters.update(detected_filters)
+        current_context.last_updated_ist = format_ist()
+        if context:
+            extracted_entities = self.context_resolver.extract_entities_from_evidence(
+                context, sources, concept=current_context.active_concept
+            )
+            if extracted_entities:
+                current_context.active_entities = extracted_entities
+        if conversation_id:
+            self._conversation_contexts[conversation_id] = current_context
+
         formatted.context_state = current_context.model_dump()
         return formatted
 
@@ -1618,14 +1735,30 @@ class RAGService:
             len(followup_intent.target_profile_urls),
         )
 
+        # A0. Ambiguous Reference Clarification (Streaming)
+        if followup_intent.intent_type == IntentType.AMBIGUOUS_CLARIFICATION:
+            clarification_text = followup_intent.clarification_prompt or "Could you please clarify which entity or topic you are referring to?"
+            current_context.last_answer = clarification_text
+            current_context.last_query = message
+            current_context.last_updated_ist = format_ist()
+            if conversation_id:
+                self._conversation_contexts[conversation_id] = current_context
+            yield f'data: {json.dumps({"type": "metadata", "sources": [], "structured_sources": [], "source_visibility": "none", "confidence": "High", "retrieval_score": 1.0, "intent": "clarification", "response_type": "simple", "context_state": current_context.model_dump()})}\n\n'
+            yield f'data: {json.dumps({"type": "content", "content": clarification_text})}\n\n'
+            yield f'data: {json.dumps({"type": "done", "reply": clarification_text, "sources": [], "structured_sources": [], "source_visibility": "none", "confidence": "High", "response_type": "simple", "context_state": current_context.model_dump()})}\n\n'
+            return
+
         # A. Evidence Reuse or Single Entity Filter (Streaming)
         if followup_intent.intent_type in (IntentType.FOLLOWUP_EVIDENCE_REUSE, IntentType.FOLLOWUP_ENTITY_FILTER) and followup_intent.reusable_evidence:
             logger.info("Stream resolving query via conversational evidence reuse: %s", followup_intent.intent_type)
             context = followup_intent.reusable_evidence
             sources = current_context.active_source_urls or [self.settings.current_university_url]
+            concept_label = (current_context.active_concept or current_context.active_entity_type or "institutional").capitalize()
+            subject_label = (current_context.active_subject or "VVITU").title()
+            title_text = f"VVITU Official {subject_label} {concept_label} Records" if current_context.active_subject else f"VVITU Official {concept_label} Directory & Records"
             structured_sources = [
                 {
-                    "title": "VVITU Official Faculty / Institutional Directory",
+                    "title": title_text,
                     "url": u,
                     "type": "website_current",
                     "period_label": "VVITU Official Portal — Grounded Record",
@@ -1636,7 +1769,7 @@ class RAGService:
                 "GROUNDED CONVERSATIONAL FOLLOW-UP DIRECTIVE:\n"
                 "• The user is asking a follow-up question referring to entities verified in earlier turns.\n"
                 "• Answer directly, concisely, and factually using the verified details in the context above.\n"
-                "• Cite specific names, designations, qualifications, roles, or links given in context.\n"
+                "• Cite specific names, designations, qualifications, roles, fees, or links given in context.\n"
                 "• NEVER reset to generic greeting, and NEVER claim the information is unavailable if present in context."
             )
             final_prompt = self._build_generation_prompt(
@@ -1645,7 +1778,7 @@ class RAGService:
                 formatting_instructions=directive,
             )
 
-            intent_val = "faculty_lookup" if current_context.active_entity_type == "faculty" else "academic"
+            intent_val = f"{current_context.active_concept}_lookup" if current_context.active_concept else ("faculty_lookup" if current_context.active_entity_type == "faculty" else "academic")
             yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "source_visibility": "compact", "confidence": "High", "retrieval_score": 0.98, "intent": intent_val, "response_type": "factual", "context_state": current_context.model_dump()})}\n\n'
 
             accumulated_chunks = []
@@ -1685,9 +1818,11 @@ class RAGService:
                         len(followup_intent.target_profile_urls), followup_intent.target_profile_urls)
             deeper_results: List[OfficialWebResult] = []
             max_crawl = getattr(self.settings, "max_deeper_profiles_fetch", 3)
-            for purl in followup_intent.target_profile_urls[:max_crawl]:
-                p_res = await self.web_retriever.retrieve_url(purl, query=message)
-                if p_res.retrieval_method != "failed":
+            # Parallel subpage retrieval
+            crawl_tasks = [self.web_retriever.retrieve_url(purl, query=message) for purl in followup_intent.target_profile_urls[:max_crawl]]
+            crawl_res = await asyncio.gather(*crawl_tasks, return_exceptions=True)
+            for p_res in crawl_res:
+                if isinstance(p_res, OfficialWebResult) and p_res.retrieval_method != "failed":
                     deeper_results.append(p_res)
 
             if deeper_results:
@@ -1702,7 +1837,8 @@ class RAGService:
                 ) = self._build_grounded_evidence(message, deeper_results)
 
                 if current_context.last_evidence_text:
-                    context = f"=== PREVIOUS TURN SUMMARY ===\n{current_context.last_evidence_text}\n\n=== DEEP PROFILE PAGES RETRIEVED ===\n{context}"
+                    prev_summary = current_context.last_evidence_text[:1200]
+                    context = f"=== PREVIOUS TURN SUMMARY ===\n{prev_summary}\n\n=== DEEP PROFILE PAGES RETRIEVED ===\n{context}"
 
                 final_prompt = self._build_generation_prompt(
                     context=context,
@@ -1747,12 +1883,25 @@ class RAGService:
                 yield f'data: {json.dumps({"type": "done", "reply": polished_reply, "sources": sources, "structured_sources": structured_sources, "source_visibility": "full" if len(structured_sources) > 1 else "compact", "confidence": confidence, "response_type": response_type_val, "context_state": current_context.model_dump()})}\n\n'
                 return
 
-        # C. Topic Expansion (Streaming)
+        # C. Topic Expansion / Concept Transition (Streaming)
         if followup_intent.intent_type == IntentType.FOLLOWUP_TOPIC_EXPANSION:
             message = followup_intent.resolved_query
             current_context.active_entities = []
             current_context.last_evidence_text = None
             current_context.active_subject = followup_intent.resolved_query
+            if followup_intent.active_concept:
+                current_context.active_concept = followup_intent.active_concept
+
+        if followup_intent.intent_type == IntentType.FOLLOWUP_CONCEPT_TRANSITION:
+            logger.info("Stream follow-up concept transition detected: '%s' -> resolved='%s'", message, followup_intent.resolved_query)
+            message = followup_intent.resolved_query
+            current_context.active_entities = []
+            current_context.last_evidence_text = None
+            if followup_intent.active_subject:
+                current_context.active_subject = followup_intent.active_subject
+            if followup_intent.active_concept:
+                current_context.active_concept = followup_intent.active_concept
+                current_context.active_entity_type = followup_intent.active_concept
 
         # ── Direct Official URL Handler (Streaming) ───────────────────
         explicit_urls = self._extract_official_urls(message)
@@ -1964,8 +2113,9 @@ class RAGService:
             )
 
         # Yield metadata first
-        yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "source_visibility": source_visibility, "confidence": confidence, "retrieval_score": round(top_adjusted, 4), "intent": intent, "response_type": response_plan.response_type})}\n\n'
+        yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "source_visibility": source_visibility, "confidence": confidence, "retrieval_score": round(top_adjusted, 4), "intent": intent, "response_type": response_plan.response_type, "context_state": current_context.model_dump()})}\n\n'
 
+        accumulated_chunks = []
         try:
             async for chunk in self.llm_service.generate_stream(
                 system_prompt=self.system_prompt,
@@ -1975,10 +2125,38 @@ class RAGService:
                 if chunk == "[FALLBACK_TRIGGERED]":
                     yield f'data: {json.dumps({"type": "fallback_triggered"})}\n\n'
                 else:
+                    accumulated_chunks.append(chunk)
                     yield f'data: {json.dumps({"type": "content", "content": chunk})}\n\n'
         except Exception as exc:
             logger.error("LLM stream failed completely: %s", exc)
             yield f'data: {json.dumps({"type": "error", "error": "An error occurred during response generation."})}\n\n'
+
+        complete_reply = "".join(accumulated_chunks)
+        polished_reply = self._polish_response(complete_reply)
+
+        current_context.last_answer = polished_reply
+        current_context.last_query = message
+        current_context.last_evidence_text = context
+        current_context.active_source_urls = sources
+        detected_concept = self.context_resolver.detect_concept(message)
+        if detected_concept:
+            current_context.active_concept = detected_concept
+            current_context.active_entity_type = detected_concept
+        detected_subject = self.context_resolver.detect_subject(message)
+        if detected_subject:
+            current_context.active_subject = detected_subject
+        detected_filters = self.context_resolver.detect_filters(message)
+        if detected_filters:
+            current_context.active_filters.update(detected_filters)
+        current_context.last_updated_ist = format_ist()
+        if context:
+            extracted_entities = self.context_resolver.extract_entities_from_evidence(
+                context, sources, concept=current_context.active_concept
+            )
+            if extracted_entities:
+                current_context.active_entities = extracted_entities
+        if conversation_id:
+            self._conversation_contexts[conversation_id] = current_context
 
         self._log_query(
             message=message,
@@ -1990,7 +2168,7 @@ class RAGService:
             top_adjusted_score=top_adjusted,
         )
 
-        yield f'data: {json.dumps({"type": "done", "response_type": response_plan.response_type, "source_visibility": source_visibility, "sources": sources, "structured_sources": structured_sources, "confidence": confidence})}\n\n'
+        yield f'data: {json.dumps({"type": "done", "reply": polished_reply, "response_type": response_plan.response_type, "source_visibility": source_visibility, "sources": sources, "structured_sources": structured_sources, "confidence": confidence, "context_state": current_context.model_dump()})}\n\n'
 
     async def _bootstrap_official_sites_if_empty(self) -> bool:
         """

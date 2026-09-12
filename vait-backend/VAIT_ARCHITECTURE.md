@@ -110,44 +110,96 @@ graph TD
 
 ---
 
-## 7. Conversational Context & Multi-Turn Reference Resolution
+## 7. Generic Institutional Conversational Context & Reference Resolution
 
-VAIT implements a generalized multi-turn reference resolution engine (`ConversationContextResolver`) to maintain continuity across follow-up queries without hardcoding specific subjects or conversational shortcuts.
+VAIT implements a generic institutional conversational context and entity resolution engine (`ConversationContextResolver`). Rather than implementing domain-specific or entity-specific shortcuts, the engine operates on a generalized institutional ontology where entities, concepts, subjects, attributes, and relationships are first-class constructs.
+
+### Core Architectural Principle
+> **"Understand what the query refers to before deciding what retrieval to perform."**
 
 ```mermaid
 graph TD
-    UserTurn["Follow-up Query (e.g. 'fetch details about them')"] --> Resolver["ConversationContextResolver"]
-    Resolver --> Classify["Analyze Query Tokens & Pronouns"]
-    Classify -- "Plural Reference (them, they, these, all of them)" --> MultiEntity["Resolve to Current Tracked Entities (61 AI Faculty)"]
-    Classify -- "Ordinal Reference (first one, second, last)" --> SingleEntity["Resolve to Specific Tracked Entity by Position"]
-    Classify -- "Department Transition (what about ECE?)" --> Transition["Transition Domain & Reset Entities"]
+    UserQuery["User Query (e.g., 'CAN U PLEASE FECTH DETAILS ABOUT THEM')"] --> Analysis["Query / Intent Analysis & Tokenization"]
+    Analysis --> RefDetect{"Conversational Reference Detected?<br/>(Pronouns: them, they, it; Ordinals: first, second; Sibling: what about X?)"}
     
-    MultiEntity --> EvidenceCheck{"Is Already-Retrieved Evidence Sufficient?"}
-    EvidenceCheck -- "Yes (Shallow Query)" --> ReuseEvidence["Reuse Institutional Evidence Immediately (0 network calls)"]
-    EvidenceCheck -- "No (Deep Query e.g. publications/bio)" --> DeepFetch["Fetch Deeper Profiles (up to max_deeper_profiles_fetch)"]
+    RefDetect -- "No Referent Found" --> NewTopic["Intent: NEW_TOPIC<br/>Perform Fresh Dual-Source / FAISS Retrieval"]
     
-    SingleEntity --> PromptAugment["Augment Query with Grounded Entity Context"]
-    ReuseEvidence --> PromptAugment
-    DeepFetch --> PromptAugment
-    Transition --> RAGRetrieval["Perform Fresh Official Retrieval"]
+    RefDetect -- "Referent Detected" --> ContextLookup["Resolve Referents Against Active ConversationContext<br/>(active_subject, active_concept, active_entities, active_relationships)"]
     
-    PromptAugment --> LLMGen["Ground in Institutional Context (Prevent Generic Refusal)"]
+    ContextLookup --> AmbiguityCheck{"Is Referent Ambiguous?<br/>(Multiple Plausible Antecedents)"}
+    AmbiguityCheck -- "Yes" --> Clarification["Intent: AMBIGUOUS_CLARIFICATION<br/>Prompt User for Disambiguation (Zero Hallucination)"]
+    
+    AmbiguityCheck -- "No (Unambiguous)" --> SiblingCheck{"Is Sibling Concept Transition?<br/>(e.g., 'what about AI & DS?' under concept 'fee')"}
+    
+    SiblingCheck -- "Yes" --> ConceptTransition["Intent: FOLLOWUP_CONCEPT_TRANSITION<br/>Preserve Concept, Switch Subject, Retrieve Sibling Domain"]
+    
+    SiblingCheck -- "No (Entity / Relationship Follow-up)" --> SufficiencyCheck{"Is Prior Evidence Sufficient for Query?<br/>(e.g., shallow details already in context table/cards)"}
+    
+    SufficiencyCheck -- "Yes (Sufficient)" --> EvidenceReuse["Intent: FOLLOWUP_EVIDENCE_REUSE<br/>Reuse Institutional Evidence Directly (0 Network Latency)"]
+    
+    SufficiencyCheck -- "No (Needs Deeper Data)" --> SubpageCheck{"Do Resolved Entities Have Subpage Links?<br/>(profile_url, detail_url)"}
+    SubpageCheck -- "Yes" --> DeeperRetrieval["Intent: FOLLOWUP_DEEPER_RETRIEVAL<br/>Parallel Crawl via asyncio.gather (up to max_deeper_profiles_fetch)"]
+    SubpageCheck -- "No" --> TargetedSearch["Perform Targeted Retrieval with Grounded Semantic Query"]
+    
+    EvidenceReuse --> PromptAugment["Augment Grounded Prompt with Active Context & Evidence Caps"]
+    DeeperRetrieval --> PromptAugment
+    ConceptTransition --> PromptAugment
+    TargetedSearch --> PromptAugment
+    NewTopic --> PromptAugment
+    
+    PromptAugment --> LLMGen["Grounded LLM Generation (Groq gpt-oss-120b -> OpenRouter Llama 3.1)"]
 ```
 
-### Reference Resolution Model
-1. **Generic Linguistic Tokens:** Resolves plural references (*them, they, these, those, their*), singular references (*he, she, it*), and ordinal references (*first, second, third, last*) using clean tokenization. Zero hardcoded query strings.
-2. **Multi-Format Entity Extraction:** Extracts structured entities (`ExtractedEntity`) from:
-   - Structured markdown tables generated from dynamic web grids.
-   - Structured JSON card structures (`res.entities`).
-   - Bulleted entity lists and profile URLs.
-3. **Shallow vs. Deeper Profile Crawling:**
-   - **Shallow follow-up queries** (e.g., "fetch details about them", "give me more info"): The resolver identifies that the already-retrieved institutional evidence contains detailed tables/cards. It reuses the evidence context directly, avoiding redundant network trips.
-   - **Deep follow-up queries** (e.g., "what are Dr. Suresh's publications?"): The resolver inspects entity `profile_url` attributes and selectively crawls deeper profile pages up to `max_deeper_profiles_fetch` (default: 3).
-4. **State Persistence & Hydration:**
-   - Conversation context state (`ConversationContext`) is serialized and persisted to MongoDB via `record_chat_exchange`.
-   - On subsequent turns, `_get_or_rehydrate_context` dynamically reconstructs context from either the stored `context_state` or the multi-turn history window (`max_context_history_turns = 10`).
-5. **Streaming & Non-Streaming Parity:**
-   - Both `/chat` and `/chat/stream` share identical reference resolution, evidence reuse, entity extraction, and state persistence workflows.
+### Generic Institutional Ontology & Data Model
+The context engine defines generic data representations that scale uniformly across all university domains (Faculty, Fees, Departments, Courses, Hostels, Transport, Examinations, Circulars/Notices, Placements, Facilities, Leadership, etc.):
+
+1. **`InstitutionalEntity`**:
+   - `name`: Entity identifier or label (e.g., `"Dr. K. Suresh"`, `"Boys Hostel Block A"`, `"B.Tech CSE"`).
+   - `entity_type`: Category classification (e.g., `"faculty"`, `"facility"`, `"course"`, `"department"`, `"hostel"`).
+   - `subject`: Domain subject (e.g., `"Computer Science & Engineering"`, `"Transport"`).
+   - `concept`: Institutional concept (e.g., `"faculty"`, `"fee"`, `"examination"`, `"notice"`).
+   - `attributes`: Flexible dictionary of key-value attributes (e.g., `{"designation": "Professor & HOD", "qualifications": "Ph.D", "annual_fee": "70,000 INR"}`).
+   - `relationships`: Directed relational mappings (e.g., `{"hod_of": "CSE", "reports_to": "Principal"}`).
+   - `source_urls`: List of provenance URLs from official domains.
+   - `confidence`: Extraction confidence score (0.0 to 1.0).
+
+2. **`ConversationContext`**:
+   - `active_subject`: Current academic or operational subject (e.g., `"CSE (AI & DS)"`, `"Mechanical Engineering"`).
+   - `active_concept`: Current university concept (e.g., `"faculty"`, `"fee"`, `"syllabus"`, `"placement"`).
+   - `active_entities`: Chronological list of `InstitutionalEntity` instances extracted from previous turns.
+   - `active_relationships`: Contextual relationships between active entities.
+   - `active_filters`: Active temporal or categorical filters (e.g., `academic_year="2025-26"`, `branch="CSE"`).
+   - `last_evidence_text`: Cached raw evidence from the preceding institutional retrieval.
+   - `recent_referents`: FIFO queue of recent salient referents for recency-biased pronoun binding.
+   - `turn_count`: Total conversation turn counter.
+
+### Linguistic Reference Resolution Engine
+- **Plural Pronouns & Demonstratives** (*them, they, their, these, those, all of them*):
+  - Resolves to all currently active entities within the matching concept or subject scope.
+- **Singular Pronouns** (*he, she, his, her, it, this, that*):
+  - Resolves to the most recently referenced singular entity matching gender/entity-type constraints (e.g., person vs. non-person).
+  - Distinguishes non-person singular pronoun `"it"` (*"when was it published?"*) from department abbreviation `"IT"` (*"Information Technology"*).
+- **Ordinal References** (*first, second, third, last, the former, the latter*):
+  - Position-based mapping directly into `active_entities` (1-indexed or relative offset).
+- **Relationship Traversal** (*"who is the hod?", "who is the director?", "who is the warden?"*):
+  - Traverses institutional relationship hierarchies grounded in official leadership directories.
+- **Sibling Concept Transitions** (*"what about AI & DS?", "how about ECE?"*):
+  - Detects subject transitions while maintaining the `active_concept` (e.g., maintaining `fee` or `syllabus` inquiry across branches without query amnesia).
+- **Ambiguity Detection**:
+  - Detects when multiple disparate candidate entity sets exist (e.g., multiple branches or facilities mentioned previously) and generates an explicit clarification response (`AMBIGUOUS_CLARIFICATION`) rather than hallucinating an arbitrary target.
+
+### Evidence Reuse vs. Deeper Retrieval
+1. **Evidence Reuse (`FOLLOWUP_EVIDENCE_REUSE`)**:
+   - When a follow-up asks for details already present in the cached evidence (e.g. designation, qualification, room fees, contact emails present in dynamic web tables or cards), VAIT bypasses the network completely, achieving **zero network latency** while maintaining 100% factual fidelity.
+2. **Parallel Deeper Crawl (`FOLLOWUP_DEEPER_RETRIEVAL`)**:
+   - When a follow-up queries deep attributes not in the summary (e.g., specific publications, patents, detailed syllabus PDF links), the engine extracts `profile_url` or `detail_url` links and concurrently fetches up to `max_deeper_profiles_fetch` (default: 3) subpages using `asyncio.gather(*tasks, return_exceptions=True)`.
+3. **Evidence Context Capping & TPM Protection**:
+   - Large directories (e.g., 156 CSE faculty records exceeding 27,000 characters) could exceed downstream LLM tokens-per-minute (TPM) limits on providers like Groq. Evidence context injected into generation prompts is capped at `max_evidence_chars = 9500` with previous context summaries capped at `1200` characters, ensuring total prompt tokens remain below 2,000 tokens while preserving full semantic fidelity.
+
+### State Hydration & Streaming Parity
+- Context states are persisted to MongoDB under the conversation document.
+- `_get_or_rehydrate_context` dynamically reconstructs `ConversationContext` from stored state or by parsing historical conversation turns.
+- Both `/api/vait/chat` and `/api/vait/chat/stream` utilize identical reference resolution pipelines, ensuring 100% behavioral parity regardless of streaming mode.
 
 ---
 

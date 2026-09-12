@@ -258,24 +258,42 @@ For VAIT's use-case — infrequent batch ingestion with high-frequency reads —
 
 ---
 
-## Phase 5 — Conversational Context & Multi-Turn State Architecture + IST Timezone Grounding (September 2026)
+## Phase 5 — Generic Institutional Conversational Context & Reference Resolution + IST Grounding (September 2026)
 
 ### What Was Built
-- **Generalized Conversation Context Resolver (`app/services/conversation_context_resolver.py`)**:
-  - Token-based & semantic pronoun/reference resolution (*them, they, these, those, their, first one, second, last*) without query hardcoding.
-  - Multi-format entity extraction from markdown tables, JSON entity cards, and bullet lists into `ExtractedEntity` models.
-  - Shallow vs. Deeper Profile distinction: immediately reuses already-retrieved institutional evidence for shallow queries, and crawls deeper profile pages up to `max_deeper_profiles_fetch` (default 3) for deep queries.
-  - Multi-turn source domain preservation across follow-up queries.
+- **Generic Institutional Conversational Context & Entity Resolution (`app/services/conversation_context_resolver.py`)**:
+  - Replaced narrow domain assumptions with a generic institutional ontology scaling across all VVIT concepts (Faculty, Fees, Departments, Courses, Hostels, Transport, Examinations, Circulars/Notices, Placements, Facilities, Leadership).
+  - Core Principle: *"Understand what the query refers to before deciding what retrieval to perform."*
+  - **`InstitutionalEntity`**: Generic entity representation storing `name`, `entity_type`, `subject`, `concept`, arbitrary key-value `attributes`, `relationships`, and provenance `source_urls`.
+  - **`ConversationContext`**: Generalized state containing `active_subject`, `active_concept`, `active_entities`, `active_relationships`, `active_filters`, `last_evidence_text`, and `recent_referents`.
+  - **Comprehensive Intent Classification**:
+    - `FOLLOWUP_EVIDENCE_REUSE`: Immediate reuse of cached evidence when sufficient (zero network latency).
+    - `FOLLOWUP_DEEPER_RETRIEVAL`: Concurrently crawls entity subpages (e.g., faculty profiles, syllabus pages) via `asyncio.gather(*tasks)`.
+    - `FOLLOWUP_CONCEPT_TRANSITION`: Sibling transitions preserving concept while shifting domain subject (e.g., BTech CSE fee -> "what about AI & DS?").
+    - `AMBIGUOUS_CLARIFICATION`: Generates clarification prompt when multiple plausible antecedents exist, preventing hallucination.
+    - `NEW_TOPIC`: Dispatches fresh dual-source / FAISS retrieval.
+  - **Linguistic Reference Resolution**:
+    - Pronoun resolution: plural (*them, they, their, these, those*), singular person (*he, she, his, her*), and singular non-person (*it, this, that*).
+    - Token disambiguation: cleanly separates lowercase pronoun `"it"` (*"when was it published?"*) from uppercase department abbreviation `"IT"` (*"Information Technology"*), and avoids partial substring collisions on short abbreviations (e.g. `"ai"` in `"details"`).
+    - Ordinal mapping: resolves relative offsets (*first, second, last, former, latter*) directly to indexed entities.
+    - Relationship traversal: resolves hierarchy links (e.g., *"who is the hod?"*).
+- **Evidence Capping & TPM Safety**:
+  - Unbounded directory extractions (e.g. 156 CSE faculty records totaling 27k+ chars) previously risked triggering provider rate limits (Groq TPM limits).
+  - Enforced `max_evidence_chars = 9500` and `prev_summary = current_context.last_evidence_text[:1200]`, keeping generation prompts under 2,000 tokens while preserving full semantic content.
 - **Full Streaming & Non-Streaming Parity**:
-  - Identical context resolution, evidence reuse, entity tracking, and MongoDB state persistence across `/chat` and `/chat/stream`.
-  - Eliminates premature refusal or identity greeting resets ("I'm VAIT...") on follow-up questions.
+  - 100% parity between `/api/vait/chat` and `/api/vait/chat/stream`.
+  - Fixes the conversational amnesia regression where follow-up queries (e.g. *"CAN U PLEASE FECTH DETAILS ABOUT THEM"*) returned generic identity greetings ("I'm VAIT...").
 - **Indian Standard Time (IST / Asia/Kolkata) Grounding**:
-  - Central timezone configuration (`APP_TIMEZONE=Asia/Kolkata`) with `tzdata` package fallback.
-  - Temporal context grounding helper (`app/utils/timezone.py`) injected into LLM system prompts (`now_ist()`, `get_ist_grounding_context()`).
+  - Central timezone configuration (`APP_TIMEZONE=Asia/Kolkata`) with `tzdata` fallback.
+  - Temporal grounding helper (`app/utils/timezone.py`) injected into LLM system prompts (`now_ist()`, `get_ist_grounding_context()`).
   - Frontend display audit in `MessageBubble.jsx` and `HistoryList.jsx` enforcing `timeZone: 'Asia/Kolkata'`.
-- **Comprehensive Regression & Acceptance Testing**:
-  - 20 unit tests in `tests/test_conversational_context_resolver.py`.
-  - End-to-end multi-turn live acceptance tests verifying follow-ups, ordinal selections, department transitions, and timezone queries.
+- **Rigorous Automated & Live Verification**:
+  - **Multi-Domain Unit Matrix**: 28 automated unit tests in `tests/test_conversational_context_resolver.py` passing 100% (0.039s).
+  - **Full Backend Discovery Suite**: 55 automated tests across all services in `tests/` passing 100% (34.822s).
+  - **Live Multi-Domain End-to-End Acceptance Tests** (`scratch/run_live_multidomain_acceptance.py`):
+    - Conversation A (Faculty -> Plural Pronoun Deeper Crawl): Passed 100%.
+    - Conversation B (Fees -> Sibling Branch Concept Transition): Passed 100%.
+    - Conversation C (Streaming Parity on `/api/vait/chat/stream`): Passed 100%.
 
 ---
 
@@ -311,7 +329,7 @@ vait-backend/
 │       ├── timezone.py             # IST (Asia/Kolkata) helpers & temporal grounding
 │       └── text_chunker.py         # Token-aware text chunking
 └── tests/
-    ├── test_conversational_context_resolver.py # 20 regression tests for follow-up state
+    ├── test_conversational_context_resolver.py # 28 multi-domain tests for generic institutional context & reference resolution
     ├── test_screenshot_vision_architecture.py  # Tier 4 screenshot & vision tests
     └── test_official_faculty_retrieval.py      # Tier 2/3 official web retrieval tests
 ```

@@ -146,7 +146,7 @@ class Settings(BaseSettings):
     openrouter_embeddings_url: str = "https://openrouter.ai/api/v1/embeddings"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     groq_timeout_seconds: float = 12.0
-    openrouter_timeout_seconds: float = 18.0
+    openrouter_timeout_seconds: float = 45.0
     embeddings_timeout_seconds: float = 20.0
 
     default_llm_provider: str = "groq"
