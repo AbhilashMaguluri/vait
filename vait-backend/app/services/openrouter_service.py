@@ -84,12 +84,13 @@ class OpenRouterService:
         import json
         async with httpx.AsyncClient() as client:
             try:
+                stream_timeout = httpx.Timeout(connect=15.0, read=45.0, write=15.0, pool=15.0)
                 async with client.stream(
                     "POST",
                     self.endpoint,
                     headers=headers,
                     json=payload,
-                    timeout=self.timeout_seconds,
+                    timeout=stream_timeout,
                 ) as response:
                     if response.status_code != 200:
                         raise RuntimeError(f"OpenRouter non-200 streaming response: {response.status_code}")

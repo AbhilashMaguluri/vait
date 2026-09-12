@@ -293,55 +293,113 @@ class BrowserRetrievalService:
                     # Navigate with domcontentloaded
                     await page.goto(url, wait_until="domcontentloaded", timeout=timeout_seconds * 1000)
 
-                    # Wait for SPA client hydration (e.g. #root has children or wait_selector)
-                    if wait_selector:
-                        try:
-                            await page.wait_for_selector(wait_selector, timeout=4000)
-                        except Exception:
-                            pass
-                    else:
-                        # Wait briefly for React/Vite mount
-                        try:
-                            await page.wait_for_selector("#root:not(:empty)", timeout=3500)
-                        except Exception:
-                            pass
-
-                    # Small tick for animations/renders to settle
-                    await asyncio.sleep(0.3)
-
-                    title = await page.title()
-                    raw_html = await page.content()
-
-                    # Extract rendered text from #root or body
-                    rendered_text = ""
+                    # Robust hydration readiness: wait for meaningful elements
+                    meaningful_selectors = wait_selector or "a[href*='/faculty/'], table, [class*='grid'], main, #root:not(:empty)"
                     try:
-                        root_elem = await page.query_selector("#root")
-                        if root_elem:
-                            rendered_text = await root_elem.inner_text()
+                        await page.wait_for_selector(meaningful_selectors, timeout=5000)
                     except Exception:
                         pass
 
-                    if not rendered_text or len(rendered_text.strip()) < 80:
+                    # Small tick for React state & rendering to settle
+                    await asyncio.sleep(0.4)
+
+                    title = await page.title()
+
+                    clean_text = ""
+
+                    # ── Strategy A: Faculty Card Grid Extraction ─────────────────
+                    faculty_links = await page.query_selector_all("a[href*='/faculty/']")
+                    if faculty_links and len(faculty_links) >= 2:
+                        from urllib.parse import urljoin
+                        extracted_faculty = []
+                        for a in faculty_links:
+                            try:
+                                href = (await a.get_attribute("href")) or ""
+                                full_url = urljoin(url, href)
+                                card_text = await a.inner_text()
+                                parts = [p.strip() for p in card_text.splitlines() if p.strip()]
+                                if len(parts) >= 2:
+                                    fname = parts[0]
+                                    fdesig = parts[1]
+                                    fqual = parts[2] if len(parts) >= 3 else ""
+                                    extracted_faculty.append((fname, fdesig, fqual, full_url))
+                            except Exception:
+                                pass
+
+                        if extracted_faculty:
+                            # Search for department title
+                            dept_title = ""
+                            for h_sel in ["h1", "h2", "h3", "h4", "p"]:
+                                try:
+                                    h_elem = await page.query_selector(h_sel)
+                                    if h_elem:
+                                        htxt = (await h_elem.inner_text()).strip()
+                                        if any(k in htxt.lower() for k in ["department", "school", "faculty"]):
+                                            dept_title = htxt
+                                            break
+                                except Exception:
+                                    pass
+
+                            md_lines = [
+                                f"**VVITU Official Faculty Directory{(' — ' + dept_title) if dept_title else ''}**",
+                                f"• **Official URL:** {url}",
+                                f"• **Total Verified Faculty Listed:** {len(extracted_faculty)}\n",
+                                "| S.No | Faculty Name | Designation | Qualification | Official Profile Link |",
+                                "|---|---|---|---|---|",
+                            ]
+                            for idx, (fname, fdesig, fqual, fprofile) in enumerate(extracted_faculty, 1):
+                                md_lines.append(f"| {idx} | **{fname}** | {fdesig} | {fqual} | [Profile]({fprofile}) |")
+
+                            clean_text = "\n".join(md_lines)
+
+                    # ── Strategy B: HTML Table Extraction ─────────────────────────
+                    if not clean_text:
+                        tables = await page.query_selector_all("table")
+                        if tables:
+                            md_tables = []
+                            for t in tables:
+                                rows = await t.query_selector_all("tr")
+                                if not rows:
+                                    continue
+                                grid = []
+                                for r in rows:
+                                    cells = await r.query_selector_all("th, td")
+                                    row_vals = [ContentExtractor._normalise(await c.inner_text()) for c in cells]
+                                    if any(row_vals):
+                                        grid.append(row_vals)
+                                if grid:
+                                    header = grid[0]
+                                    t_lines = ["| " + " | ".join(header) + " |"]
+                                    t_lines.append("| " + " | ".join(["---"] * len(header)) + " |")
+                                    for row in grid[1:]:
+                                        padded = row + [""] * (len(header) - len(row))
+                                        t_lines.append("| " + " | ".join(padded[:len(header)]) + " |")
+                                    md_tables.append("\n".join(t_lines))
+                            if md_tables:
+                                clean_text = "\n\n".join(md_tables)
+
+                    # ── Strategy C: Standard Clean Rendered DOM ────────────────────
+                    if not clean_text or len(clean_text) < 80:
+                        rendered_text = ""
                         try:
-                            body_elem = await page.query_selector("body")
-                            if body_elem:
-                                rendered_text = await body_elem.inner_text()
+                            root_elem = await page.query_selector("#root")
+                            if root_elem:
+                                rendered_text = await root_elem.inner_text()
                         except Exception:
                             pass
 
-                    clean_text = ContentExtractor._normalise(rendered_text or "")
+                        if not rendered_text or len(rendered_text.strip()) < 80:
+                            try:
+                                body_elem = await page.query_selector("body")
+                                if body_elem:
+                                    rendered_text = await body_elem.inner_text()
+                            except Exception:
+                                pass
+
+                        clean_text = ContentExtractor._normalise(rendered_text or "")
 
                     # ── Evaluate if DOM text is sufficient ────────────────
                     is_dom_sufficient = len(clean_text) >= 120
-
-                    if is_dom_sufficient and query:
-                        # Check if query keywords appear in rendered DOM
-                        q_words = [
-                            w for w in re.sub(r"[^a-zA-Z0-9\s]", " ", query.lower()).split()
-                            if len(w) > 3 and w not in {"what", "tell", "about", "give", "show", "who", "with"}
-                        ]
-                        if q_words and not any(w in clean_text.lower() for w in q_words):
-                            is_dom_sufficient = False
 
                     if is_dom_sufficient:
                         logger.info("Rendered DOM extraction succeeded for %s (%d chars)", url, len(clean_text))

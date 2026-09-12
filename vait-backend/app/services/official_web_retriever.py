@@ -344,12 +344,12 @@ class OfficialWebRetriever:
         })
         self.cache = OfficialWebCache()
         self.browser_service = get_browser_retrieval_service()
-        self.routes_catalog = OFFICIAL_VVITU_ROUTES
+        self.routes_catalog = list(OFFICIAL_VVITU_ROUTES)
 
         # Find local bundle if available
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         default_bundle_path = os.path.join(base_dir, "data", "vvitu_bundle.js")
-        self.bundle_local_path = bundle_local_path or default_bundle_path
+        self.bundle_local_path = bundle_local_path if isinstance(bundle_local_path, str) else default_bundle_path
 
         # Parsed catalogs
         self.faculty_catalog: List[Dict[str, Any]] = []
@@ -357,6 +357,7 @@ class OfficialWebRetriever:
         self.schools_catalog: List[Dict[str, Any]] = []
         self.programs_catalog: List[Dict[str, Any]] = []
         self.pages_catalog: List[Dict[str, Any]] = []
+        self.departments_catalog: List[Dict[str, Any]] = []
         self._catalog_initialized = False
 
         # Build initial catalog from bundle
@@ -603,7 +604,48 @@ class OfficialWebRetriever:
                     })
                     count += 1
 
-            logger.info("Successfully extracted %d faculty members from bundle", count)
+                # Build dynamic department catalog & route
+                KNOWN_DEPT_SYNONYMS = {
+                    "cse-ai-faculty": ["ai", "ds", "ai ds", "ai & ds", "ai and ds", "cse ai", "cse ai & ds", "artificial intelligence", "data science", "machine learning", "aiml", "ai ds faculty", "cse ai faculty", "ai faculty", "cse-ai-faculty"],
+                    "cse-faculty": ["cse", "computer science", "cse faculty", "computer science faculty", "cse-faculty", "computer science engineering"],
+                    "ece-faculty": ["ece", "electronics", "communication", "ece faculty", "electronics faculty", "ece-faculty", "electronics and communication"],
+                    "eee-faculty": ["eee", "electrical", "eee faculty", "electrical faculty", "eee-faculty", "electrical and electronics"],
+                    "civil-faculty": ["civil", "civil engineering", "civil faculty", "ce faculty", "civil-faculty"],
+                    "mec-faculty": ["mech", "mechanical", "mec faculty", "mech faculty", "mechanical faculty", "mec-faculty", "mechanical engineering"],
+                    "applied-sciences-faculty": ["bsh", "bs&h", "applied sciences", "basic sciences", "maths", "physics", "chemistry", "applied sciences faculty", "bsh faculty", "humanities and sciences"],
+                    "humanities-social-sciences-faculty": ["humanities", "social sciences", "english", "humanities faculty", "social sciences faculty"],
+                    "business-administration-faculty": ["mba", "management", "business", "business administration", "mba faculty", "management faculty", "business faculty", "appa school of business"],
+                }
+                dept_keywords = set(KNOWN_DEPT_SYNONYMS.get(slug, []))
+                dept_keywords.add(slug)
+                dept_keywords.add(slug.replace("-", " "))
+                dept_keywords.add(slug.replace("-faculty", ""))
+                dept_keywords.add(f"{slug.replace('-faculty', '').replace('-', ' ')} faculty")
+                dept_keywords.add(dept_name.lower())
+                clean_name = re.sub(r"(?i)department of\s*", "", dept_name).strip().lower()
+                dept_keywords.add(clean_name)
+                dept_keywords.add(f"{clean_name} faculty")
+
+                self.departments_catalog.append({
+                    "slug": slug,
+                    "name": dept_name,
+                    "url": f"https://vvitu.ac.in/admissions/faculty/{slug}",
+                    "faculty_count": len(matches),
+                    "keywords": list(dept_keywords),
+                })
+
+                dept_route_path = f"/admissions/faculty/{slug}"
+                if not any(r.get("path") == dept_route_path for r in self.routes_catalog):
+                    self.routes_catalog.append({
+                        "path": dept_route_path,
+                        "url": f"https://vvitu.ac.in{dept_route_path}",
+                        "title": f"VVITU {dept_name} Faculty Directory",
+                        "description": f"Official faculty directory for {dept_name} at VVIT University (VVITU), listing all professors, associate professors, assistant professors, and qualifications.",
+                        "keywords": list(dept_keywords),
+                        "wait_selector": "a[href*='/faculty/'], table, [class*='grid'], main, #root:not(:empty)",
+                    })
+
+            logger.info("Successfully extracted %d faculty members across %d departments from bundle", count, len(self.departments_catalog))
         except Exception as exc:
             logger.error("Failed to parse faculty from bundle: %s", exc)
 
@@ -809,19 +851,21 @@ class OfficialWebRetriever:
             "can", "you", "know", "there", "their", "this", "that", "with",
             "from", "does", "have", "some", "more", "much", "many", "been",
         }
-        meaningful_tokens = {t for t in q_tokens if t not in stop_words and len(t) > 2}
+        meaningful_tokens = {t for t in q_tokens if t not in stop_words and len(t) >= 2}
 
         matches = []
         for route in self.routes_catalog:
             score = 0
             for kw in route["keywords"]:
                 kw_lower = kw.lower()
-                if " " in kw_lower:
-                    if kw_lower in q_norm:
-                        score += 3
+                if " " in kw_lower or "-" in kw_lower:
+                    if kw_lower in q_norm or kw_lower.replace("-", " ") in q_norm:
+                        score += 5
                 else:
                     if kw_lower in meaningful_tokens:
-                        score += 2
+                        score += 3
+                    elif kw_lower in q_norm:
+                        score += 1
 
             if score > 0:
                 matches.append((score, route))
@@ -843,13 +887,15 @@ class OfficialWebRetriever:
         period = "current" if is_vvitu else "historical"
         tier = "primary_official_current" if is_vvitu else "legacy_official_vvit"
 
+        entity_type = "faculty" if "/faculty" in url else ("leadership" if "/leadership" in url else "general_page")
+
         if render_res.success:
             content = (
                 f"**{render_res.title}**\n"
                 f"• **Official URL:** {url}\n"
                 f"• **Institution:** {'VVIT University (VVITU)' if is_vvitu else 'Vasireddy Venkatadri Institute of Technology (VVIT)'}\n"
                 f"• **Retrieval Method:** {render_res.method}\n\n"
-                f"{render_res.text[:2500]}"
+                f"{render_res.text[:12000]}"
             )
             return OfficialWebResult(
                 title=render_res.title or ("VVITU Official Portal" if is_vvitu else "VVIT Legacy Portal"),
@@ -858,7 +904,7 @@ class OfficialWebRetriever:
                 period=period,
                 source_tier=tier,
                 confidence=0.96,
-                entity_type="general_page",
+                entity_type=entity_type,
                 retrieval_method=render_res.method,
                 metadata={"chars": len(render_res.text)},
             )
@@ -882,6 +928,120 @@ class OfficialWebRetriever:
                 retrieval_method="direct_url_only",
                 metadata={"error": render_res.error},
             )
+
+    def is_safe_official_url(self, url: str) -> bool:
+        """Validate that a URL is a safe official institutional URL and not SSRF attack."""
+        try:
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https"):
+                return False
+            hostname = (parsed.hostname or "").lower()
+            if not hostname:
+                return False
+            # Check against allowed official domains
+            is_allowed = (
+                hostname in CURRENT_DOMAINS or
+                hostname in LEGACY_DOMAINS or
+                any(hostname.endswith("." + d) for d in CURRENT_DOMAINS) or
+                any(hostname.endswith("." + d) for d in LEGACY_DOMAINS)
+            )
+            if not is_allowed:
+                return False
+            # Prevent loopback and private addresses
+            blocked = ["localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.", "10.", "192.168.", "172.16."]
+            if any(b in hostname for b in blocked):
+                return False
+            return True
+        except Exception:
+            return False
+
+    async def retrieve_url(self, url: str, query: str = "") -> OfficialWebResult:
+        """
+        Retrieve and extract structured institutional information from a specific official URL.
+        Validates SSRF safety, checks catalog for instant match, and renders headlessly with card extraction.
+        """
+        if not self.is_safe_official_url(url):
+            logger.warning("Blocked unsafe or non-official URL retrieval: %s", url)
+            return OfficialWebResult(
+                title="Invalid or Unsupported URL",
+                url=url,
+                content=f"The URL {url} is not an authorized official VVITU or VVIT website address.",
+                period="current",
+                source_tier="primary_official_current",
+                confidence=0.0,
+                retrieval_method="failed",
+            )
+
+        # Check cache
+        cache_key = f"url:{url}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            return cached[0]
+
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        is_vvitu = any(d in hostname for d in CURRENT_DOMAINS)
+        is_legacy = any(d in hostname for d in LEGACY_DOMAINS)
+        period = "current" if is_vvitu else "historical"
+        tier = "primary_official_current" if is_vvitu else "legacy_official_vvit"
+
+        # Check if URL is an individual faculty profile in catalog
+        if is_vvitu:
+            norm_url = url.rstrip("/")
+            for fac in self.faculty_catalog:
+                if fac["url"].rstrip("/") == norm_url:
+                    res = OfficialWebResult(
+                        title=f"VVITU Official Faculty Profile — {fac['name']}",
+                        url=fac["url"],
+                        content=(
+                            f"**{fac['name']}**\n"
+                            f"• **Designation:** {fac['designation']}\n"
+                            f"• **Department:** {fac['dept_name']}\n"
+                            f"• **Qualification:** {fac['qualification']}\n"
+                            f"• **Institution:** VVIT University (VVITU)\n"
+                            f"• **Official Profile URL:** {fac['url']}"
+                        ),
+                        period="current",
+                        source_tier="primary_official_current",
+                        confidence=0.98,
+                        entity_type="faculty",
+                        retrieval_method="catalog",
+                        metadata=fac,
+                    )
+                    self.cache.set(cache_key, [res])
+                    return res
+
+        # Check if legacy page can be retrieved via fast HTTP
+        if is_legacy:
+            legacy_text = await asyncio.to_thread(self._fetch_legacy_page, url)
+            if legacy_text and len(legacy_text.strip()) >= 120:
+                res = OfficialWebResult(
+                    title="VVIT Legacy Official Portal",
+                    url=url,
+                    content=(
+                        f"**VVIT Legacy Archive: {url}**\n"
+                        f"• **Source:** Vasireddy Venkatadri Institute of Technology (Historical Archive)\n"
+                        f"• **URL:** {url}\n\n"
+                        f"{legacy_text[:3000]}"
+                    ),
+                    period="historical",
+                    source_tier="legacy_official_vvit",
+                    confidence=0.92,
+                    entity_type="general_page",
+                    retrieval_method="http",
+                    metadata={"url": url},
+                )
+                self.cache.set(cache_key, [res])
+                return res
+
+        # For React SPA / dynamic pages (VVITU or dynamic legacy), render headlessly with card extraction
+        render_res = await self.render_official_page(
+            url,
+            query=query,
+            wait_selector="a[href*='/faculty/'], table, [class*='grid'], main, #root:not(:empty)",
+        )
+        self.cache.set(cache_key, [render_res])
+        return render_res
 
     def _search_vvitguntur_live(self, query: str, max_items: int = 2) -> List[OfficialWebResult]:
         """
@@ -1037,7 +1197,19 @@ class OfficialWebRetriever:
         if cached is not None:
             return cached[:max_results]
 
+        # 1. Check if query contains an explicit official URL
+        url_match = re.search(r'https?://[^\s<>"]+', query)
+        if url_match:
+            cand_url = url_match.group(0).rstrip(".,;!?'\")>]}")
+            if self.is_safe_official_url(cand_url):
+                logger.info("Direct official URL found in query: %s", cand_url)
+                url_res = await self.retrieve_url(cand_url, query=query)
+                if url_res.retrieval_method != "failed":
+                    self.cache.set(f"{query}:{period}", [url_res])
+                    return [url_res]
+
         results: List[OfficialWebResult] = []
+        is_faculty_query = any(k in query.lower() for k in ["faculty", "professor", "professors", "teacher", "teachers", "staff", "hod", "head of department", "members"])
 
         if period == "historical":
             # 1. Historical query: check legacy leadership
@@ -1067,42 +1239,70 @@ class OfficialWebRetriever:
                 results.extend(legacy_live)
 
         elif period == "current":
-            # 1. Check catalog (leadership, faculty, schools, programs, pages)
+            # If faculty query, check matching routes FIRST (e.g. department directories)
+            matched_routes = self._find_matching_routes(query)
+            if is_faculty_query and matched_routes:
+                for route in matched_routes[:2]:
+                    if not any(r.url == route["url"] for r in results):
+                        route_res = await self.render_official_page(
+                            route["url"],
+                            query=query,
+                            wait_selector=route.get("wait_selector"),
+                        )
+                        if route_res.retrieval_method != "failed":
+                            results.append(route_res)
+
+            # Check catalog (leadership, faculty, schools, programs, pages)
             curr_results = self.search_vvitu(query)
             results.extend(curr_results)
 
-            # 2. Check dynamic official routes (examinations, notifications, careers, hostels, transport, etc.)
-            matched_routes = self._find_matching_routes(query)
-            for route in matched_routes[:2]:
-                if not any(r.url == route["url"] for r in results):
-                    route_res = await self.render_official_page(
-                        route["url"],
-                        query=query,
-                        wait_selector=route.get("wait_selector"),
-                    )
-                    results.append(route_res)
+            # Check other dynamic routes if not already rendered
+            if not is_faculty_query and matched_routes:
+                for route in matched_routes[:2]:
+                    if not any(r.url == route["url"] for r in results):
+                        route_res = await self.render_official_page(
+                            route["url"],
+                            query=query,
+                            wait_selector=route.get("wait_selector"),
+                        )
+                        if route_res.retrieval_method != "failed":
+                            results.append(route_res)
 
-            # 3. If still empty, render homepage headlessly
+            # If still empty, render homepage headlessly
             if not results:
                 home_res = await self.render_official_page("https://vvitu.ac.in/", query=query, wait_selector="#root")
                 if home_res.retrieval_method != "failed":
                     results.append(home_res)
 
         else:
-            # General query: check current catalog first
+            # General query: if faculty query, check matching routes FIRST
+            matched_routes = self._find_matching_routes(query)
+            if is_faculty_query and matched_routes:
+                for route in matched_routes[:2]:
+                    if not any(r.url == route["url"] for r in results):
+                        route_res = await self.render_official_page(
+                            route["url"],
+                            query=query,
+                            wait_selector=route.get("wait_selector"),
+                        )
+                        if route_res.retrieval_method != "failed":
+                            results.append(route_res)
+
+            # Check current catalog
             curr_results = self.search_vvitu(query)
             results.extend(curr_results)
 
-            # Check dynamic official routes
-            matched_routes = self._find_matching_routes(query)
-            for route in matched_routes[:2]:
-                if not any(r.url == route["url"] for r in results):
-                    route_res = await self.render_official_page(
-                        route["url"],
-                        query=query,
-                        wait_selector=route.get("wait_selector"),
-                    )
-                    results.append(route_res)
+            # Check dynamic official routes if not already rendered
+            if not is_faculty_query and matched_routes:
+                for route in matched_routes[:2]:
+                    if not any(r.url == route["url"] for r in results):
+                        route_res = await self.render_official_page(
+                            route["url"],
+                            query=query,
+                            wait_selector=route.get("wait_selector"),
+                        )
+                        if route_res.retrieval_method != "failed":
+                            results.append(route_res)
 
             # If legacy query or no current results, search legacy
             q_lower = query.lower()

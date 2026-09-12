@@ -12,6 +12,7 @@ from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
 import datetime
+from urllib.parse import urlparse
 
 from app.utils.config import (
     Settings,
@@ -407,12 +408,14 @@ class RAGService:
         """
         q = query.lower()
 
-        # 1. Direct college / institute / university name mentions
+        # 1. Direct college / institute / university name mentions or official URLs
         institutional_names = {
             "vvit", "vvitu", "vasireddy", "venkatadri", "nambur",
             "vvitian", "vvitians", "vvitguntur",
         }
         if any(re.search(rf"\b{re.escape(name)}\b", q) for name in institutional_names):
+            return True
+        if re.search(r"https?://[^\s]*(?:vvitu\.ac\.in|vvitguntur\.com)", q):
             return True
 
         # 2. Check if official web retriever catalog matches an entity (faculty, leadership, school, program)
@@ -442,6 +445,20 @@ class RAGService:
         ]
         return any(re.search(pattern, q) for pattern in college_entities)
 
+    @staticmethod
+    def _extract_official_urls(text: str) -> List[str]:
+        """Extract and validate official URLs from user message."""
+        url_pattern = re.compile(r'https?://[^\s<>"]+')
+        matches = url_pattern.findall(text)
+        official_urls = []
+        for u in matches:
+            u_clean = u.rstrip(".,;!?'\")>]}")
+            parsed = urlparse(u_clean)
+            hostname = (parsed.hostname or "").lower()
+            if any(d in hostname for d in ["vvitu.ac.in", "vvitguntur.com"]):
+                official_urls.append(u_clean)
+        return official_urls
+
     def _is_rag_sufficient(self, query: str, qualified_chunks: List[RetrievedChunk]) -> bool:
         """
         Evaluate whether retrieved RAG chunks actually contain the specific named entity
@@ -451,7 +468,10 @@ class RAGService:
             return False
 
         q_lower = query.lower()
-        name_indicators = ["dr.", "dr ", "prof.", "prof ", "mr.", "mr ", "faculty", "who is", "tell me about", "details of", "profile of"]
+        name_indicators = [
+            "dr.", "dr ", "prof.", "prof ", "mr.", "mr ", "faculty", "professor",
+            "who is", "tell me about", "details of", "profile of", "members", "hod"
+        ]
         has_name_indicator = any(ind in q_lower for ind in name_indicators)
 
         if has_name_indicator:
@@ -459,15 +479,19 @@ class RAGService:
                 "tell", "about", "who", "what", "where", "when", "how", "the", "for",
                 "with", "from", "and", "our", "are", "you", "details", "give", "info",
                 "information", "does", "profile", "vvit", "vvitu", "college", "university",
-                "please", "know", "name",
+                "please", "know", "name", "can", "faculty", "professors", "teachers",
+                "department", "school", "branch", "at", "in", "on", "of", "is", "to",
+                "me", "us", "by", "as", "an", "a", "or", "so", "if", "be", "do", "we",
+                "he", "it", "my", "any", "all", "some", "this", "that", "these", "those",
             }
+            # Include 2+ char tokens to capture acronyms like ai, ds, cs, ce, me, it
             tokens = [
                 w for w in re.sub(r"[^a-zA-Z0-9\s]", " ", q_lower).split()
-                if len(w) >= 3 and w not in stop_words
+                if len(w) >= 2 and w not in stop_words
             ]
             if tokens:
                 combined_text = " ".join(c.content.lower() for c in qualified_chunks)
-                found = any(t in combined_text for t in tokens)
+                found = any(bool(re.search(rf"\b{re.escape(t)}\b", combined_text)) for t in tokens)
                 if not found:
                     logger.info("RAG insufficient: Query entity tokens %s not found in retrieved chunks", tokens)
                     return False
@@ -869,6 +893,68 @@ class RAGService:
             self._cache_put(message, direct_resp)
             return direct_resp
 
+        # ── Direct Official URL Handler ──────────────────────────────
+        explicit_urls = self._extract_official_urls(message)
+        if explicit_urls:
+            logger.info("Direct official URL detected in query: %s", explicit_urls)
+            url_results: List[OfficialWebResult] = []
+            for u in explicit_urls[:2]:
+                u_res = await self.web_retriever.retrieve_url(u, query=message)
+                if u_res.retrieval_method != "failed":
+                    url_results.append(u_res)
+
+            if url_results:
+                context = "\n\n".join(r.content for r in url_results)
+                sources = [r.url for r in url_results]
+                structured_sources = [r.to_structured_source() for r in url_results]
+                source_visibility = "compact" if len(structured_sources) <= 1 else "full"
+                confidence = "High"
+
+                official_directive = (
+                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
+                    "• The above information was retrieved directly from the official institutional URL provided.\n"
+                    "• Answer the user's question directly, factually, and completely using this verified information.\n"
+                    "• Cite key details (e.g. faculty names, designations, qualifications, official profile links).\n"
+                    "• Present the information in an organized, beautiful format (e.g. structured list or table).\n"
+                    "• NEVER claim the information is unavailable or tell the user to manually visit the page; synthesize the answer directly from the content above."
+                )
+                final_prompt = self._build_generation_prompt(
+                    context=context,
+                    query=message,
+                    formatting_instructions=f"{official_directive}",
+                )
+
+                t_gen_start = time.perf_counter()
+                response_text = self.llm_service.generate(
+                    system_prompt=self.system_prompt,
+                    user_prompt=final_prompt,
+                    history=history,
+                )
+                t_gen_end = time.perf_counter()
+                response_text, confidence = self._hallucination_guard(
+                    response_text, confidence, sources, is_institutional=True,
+                )
+                response_text = self._polish_response(response_text)
+                resp = RAGResponse(
+                    reply=response_text,
+                    sources=sources,
+                    structured_sources=structured_sources,
+                    source_visibility=source_visibility,
+                    confidence=confidence,
+                    retrieval_score=0.98,
+                    is_refusal=False,
+                    intent="faculty_lookup" if any("/faculty" in u for u in explicit_urls) else "general",
+                    response_type="tabular" if any("/faculty" in u for u in explicit_urls) else "factual",
+                    performance={
+                        "retrieval_ms": int((time.perf_counter() - t_start) * 1000),
+                        "generation_ms": int((t_gen_end - t_gen_start) * 1000),
+                        "total_ms": int((time.perf_counter() - t_start) * 1000),
+                        "cache_hit": False,
+                    },
+                )
+                self._cache_put(message, resp)
+                return resp
+
         # ── Classify intent & Plan response format ───────────────────
         intent, matched_keywords = self.classify_intent(message)
         logger.debug("Intent: %s (keywords: %s)", intent, matched_keywords)
@@ -1155,6 +1241,69 @@ class RAGService:
             yield f'data: {json.dumps({"type": "content", "content": direct_resp.reply})}\n\n'
             yield f'data: {json.dumps({"type": "done", "reply": direct_resp.reply, "sources": direct_resp.sources, "structured_sources": direct_resp.structured_sources, "source_visibility": direct_resp.source_visibility, "confidence": direct_resp.confidence, "response_type": direct_resp.response_type})}\n\n'
             return
+
+        # ── Direct Official URL Handler (Streaming) ───────────────────
+        explicit_urls = self._extract_official_urls(message)
+        if explicit_urls:
+            logger.info("Direct official URL detected in stream query: %s", explicit_urls)
+            url_results: List[OfficialWebResult] = []
+            for u in explicit_urls[:2]:
+                u_res = await self.web_retriever.retrieve_url(u, query=message)
+                if u_res.retrieval_method != "failed":
+                    url_results.append(u_res)
+
+            if url_results:
+                context = "\n\n".join(r.content for r in url_results)
+                sources = [r.url for r in url_results]
+                structured_sources = [r.to_structured_source() for r in url_results]
+                source_visibility = "compact" if len(structured_sources) <= 1 else "full"
+                confidence = "High"
+
+                official_directive = (
+                    "GROUNDED OFFICIAL ANSWER DIRECTIVE:\n"
+                    "• The above information was retrieved directly from the official institutional URL provided.\n"
+                    "• Answer the user's question directly, factually, and completely using this verified information.\n"
+                    "• Cite key details (e.g. faculty names, designations, qualifications, official profile links).\n"
+                    "• Present the information in an organized, beautiful format (e.g. structured list or table).\n"
+                    "• NEVER claim the information is unavailable or tell the user to manually visit the page; synthesize the answer directly from the content above."
+                )
+                final_prompt = self._build_generation_prompt(
+                    context=context,
+                    query=message,
+                    formatting_instructions=f"{official_directive}",
+                )
+
+                intent_val = "faculty_lookup" if any("/faculty" in u for u in explicit_urls) else "general"
+                format_val = "tabular" if any("/faculty" in u for u in explicit_urls) else "factual"
+
+                yield f'data: {json.dumps({"type": "metadata", "sources": sources, "structured_sources": structured_sources, "source_visibility": source_visibility, "confidence": confidence, "retrieval_score": 0.98, "intent": intent_val, "response_type": format_val})}\n\n'
+
+                accumulated_chunks = []
+                try:
+                    async for text_chunk in self.llm_service.generate_stream(
+                        system_prompt=self.system_prompt,
+                        user_prompt=final_prompt,
+                        history=history,
+                    ):
+                        if text_chunk == "[FALLBACK_TRIGGERED]":
+                            yield f'data: {json.dumps({"type": "fallback_triggered"})}\n\n'
+                        else:
+                            accumulated_chunks.append(text_chunk)
+                            yield f'data: {json.dumps({"type": "content", "content": text_chunk})}\n\n'
+                except Exception as exc:
+                    logger.error("LLM streaming failed for official URL: %s", exc)
+                    fallback_reply = self.llm_service.generate(
+                        system_prompt=self.system_prompt,
+                        user_prompt=final_prompt,
+                        history=history,
+                    )
+                    accumulated_chunks = [fallback_reply]
+                    yield f'data: {json.dumps({"type": "content", "content": fallback_reply})}\n\n'
+
+                complete_reply = "".join(accumulated_chunks)
+                polished_reply = self._polish_response(complete_reply)
+                yield f'data: {json.dumps({"type": "done", "reply": polished_reply, "sources": sources, "structured_sources": structured_sources, "source_visibility": source_visibility, "confidence": confidence, "response_type": format_val})}\n\n'
+                return
 
         intent, matched_keywords = self.classify_intent(message)
         query_period = self._detect_query_period(message)
